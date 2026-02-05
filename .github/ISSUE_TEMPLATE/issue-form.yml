@@ -8,7 +8,7 @@ body:
     attributes:
       label: '🎟️ 상위 작업 (Ticket Number)'
       description: '상위 작업의 Ticket Number를 기입해주세요'
-      placeholder: 'TR1L-0'
+      placeholder: 'HSC-0'
     validations:
       required: true
   - type: dropdown
