@@ -1,0 +1,126 @@
+name: jira-sync-on-pr
+on:
+  workflow_call:
+    secrets:
+      JIRA_BASE_URL: { required: true }
+      JIRA_EMAIL: { required: true }
+      JIRA_API_TOKEN: { required: true }
+jobs:
+  pr-sync:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: write
+      contents: read
+    steps:
+      # 1. PR 본문에서 데이터 추출
+      - name: Extract Metadata
+        id: meta
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || ""; 
+            const jiraKey = body.match(/[A-Z][A-Z0-9]+-[0-9]+/)?.[0];
+            const issueNumber = body.match(/closes\s+#(\d+)/i)?.[1];
+            core.setOutput('jira_key', jiraKey || '');
+            core.setOutput('issue_number', issueNumber || '');
+     
+      - name: Sync Labels from Issue
+        id: sync_labels
+        if: github.event.action == 'opened' && steps.meta.outputs.issue_number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue_number = parseInt("${{ steps.meta.outputs.issue_number }}");
+            
+            const issue = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue_number
+            });
+            
+            const labels = issue.data.labels.map(l => typeof l === 'string' ? l : l.name);
+            
+            const typeLabel = labels.find(l => 
+              l.startsWith('✨') || l.startsWith('🐛') || l.startsWith('🚑') || 
+              l.startsWith('♻️') || l.startsWith('🎨') || l.startsWith('✅') ||
+              l.startsWith('📕') || l.startsWith('🧹') || l.startsWith('🔧') ||
+              l.startsWith('📦') || l.startsWith('🏗️') || l.startsWith('🚀') ||
+              l.startsWith('🏷️') || l.startsWith('🛡️') || l.startsWith('⚡') ||
+              l.startsWith('🧪') || l.startsWith('🔄') || l.startsWith('🗑️') ||
+              l.startsWith('🔖')
+            );
+            
+            core.setOutput('type_label', typeLabel || '');
+            
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                labels: labels
+              });
+            }
+
+      # 2. PR 제목에 [티켓번호] <type>: 자동 추가
+      - name: Update PR Title
+        if: github.event.action == 'opened' && steps.meta.outputs.jira_key != ''
+        uses: actions/github-script@v7
+        env:
+          JIRA_KEY: ${{ steps.meta.outputs.jira_key }}
+          TYPE_LABEL: ${{ steps.sync_labels.outputs.type_label }}
+        with:
+          script: |
+            const { JIRA_KEY, TYPE_LABEL } = process.env;
+            const pr = context.payload.pull_request;
+            
+            const typeMap = {
+              "✨ feat": "feat",
+              "🐛 fix": "fix",
+              "🚑 hotfix": "hotfix",
+              "♻️ refactor": "refactor",
+              "🎨 style": "style",
+              "✅ test": "test",
+              "📕 docs": "docs",
+              "🧹 chore": "chore",
+              "🔧 config": "config",
+              "📦 deps": "deps",
+              "🏗️ build": "build",
+              "🚀 deploy": "deploy",
+              "🏷️ release": "release",
+              "🛡️ security": "security",
+              "⚡ perf": "perf",
+              "🧪 spike": "spike",
+              "🔄 rename": "rename",
+              "🗑️ remove": "remove",
+              "🔖 init": "init"
+            };
+            
+            const commitType = typeMap[TYPE_LABEL] || "task";
+            
+            let cleanTitle = pr.title
+              .replace(/^\[[A-Z0-9-]+\]\s*/, "")
+              .replace(/^(feat|fix|hotfix|refactor|style|test|docs|chore|config|deps|build|deploy|release|security|perf|spike|rename|remove|init|task):\s*/i, "")
+              .trim();
+            
+        
+            const newTitle = `[${JIRA_KEY}] ${commitType}: ${cleanTitle}`;
+            
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              title: newTitle
+            });
+
+      - name: Transition Jira to Done
+        if: github.event.pull_request.merged == true && steps.meta.outputs.jira_key != ''
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_BASE: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_KEY: ${{ steps.meta.outputs.jira_key }}
+        run: |
+          curl -s -u "$JIRA_EMAIL:$JIRA_TOKEN" -X POST -H "Content-Type: application/json" \
+            -d '{"transition": {"id": "31"}}' \
+            "$JIRA_BASE/rest/api/3/issue/$JIRA_KEY/transitions"
