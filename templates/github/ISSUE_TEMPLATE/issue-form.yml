@@ -1,5 +1,5 @@
 name: '이슈 생성'
-description: 'Repo에 이슈를 생성하며, 생성된 이슈는 Jira와 연동됩니다.(필수: type/arae/priority)'
+description: 'Repo에 이슈를 생성하며, 생성된 이슈는 Jira Workface와 연동됩니다.(필수: type/arae/priority/team)'
 labels: []
 title: '이슈 이름을 작성해주세요'
 body:
