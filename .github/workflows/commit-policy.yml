@@ -1,0 +1,88 @@
+name: commit-policy
+
+on:
+  workflow_call:
+    inputs:
+      allowed_types_json:
+        type: string
+        required: false
+        default: '["feat","fix","refactor","style","test","docs","chore","config","deps","build","deploy","release","hotfix","security","perf","spike","rename","remove","init"]'
+      ticket_pattern:
+        type: string
+        required: false
+        default: '^[A-Z]+-[0-9]+$'
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Validate branch name & commit messages
+        uses: actions/github-script@v7
+        env:
+          ALLOWED_TYPES_JSON: ${{ inputs.allowed_types_json }}
+          TICKET_PATTERN: ${{ inputs.ticket_pattern }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.info("Not a pull_request event. Skipping.");
+              return;
+            }
+
+            const allowedTypes = JSON.parse(process.env.ALLOWED_TYPES_JSON);
+            const ticketRe = new RegExp(process.env.TICKET_PATTERN);
+
+            const headRef = pr.head.ref; // ex) feat/HSC-2
+            const m = headRef.match(/^([a-z]+)\/([A-Z]+-\d+)$/);
+            if (!m) {
+              core.setFailed(`브랜치명 규칙 위반: "${headRef}" (필수: <type>/<TICKET>, 예: feat/HSC-2)`);
+              return;
+            }
+
+            const type = m[1];
+            const ticket = m[2];
+
+            if (!allowedTypes.includes(type)) {
+              core.setFailed(`브랜치 type 위반: "${type}" (허용: ${allowedTypes.join(", ")})`);
+              return;
+            }
+            if (!ticketRe.test(ticket)) {
+              core.setFailed(`티켓 번호 형식 위반: "${ticket}"`);
+              return;
+            }
+
+            core.info(`Branch OK: type=${type}, ticket=${ticket}`);
+            const expectedPrefix = `${type}/${ticket}: `;
+
+            const commits = await github.paginate(
+              github.rest.pulls.listCommits,
+              { owner, repo, pull_number: pr.number, per_page: 100 }
+            );
+
+            const bad = [];
+            for (const c of commits) {
+              const firstLine = (c.commit.message || "").split("\n")[0].trim();
+              if (!firstLine.startsWith(expectedPrefix)) {
+                bad.push({ sha: c.sha.slice(0,7), msg: firstLine });
+              }
+            }
+
+            if (bad.length) {
+              const lines = bad.map(x => `- ${x.sha}: ${x.msg}`).join("\n");
+              core.setFailed(
+                `커밋 메시지 규칙 위반 (필수 접두사: "${expectedPrefix}")\n` +
+                `아래 커밋들이 규칙을 만족하지 않습니다:\n${lines}\n\n` +
+                `TIP) 로컬에서 husky로 자동 부착하거나, rebase -i로 커밋 메시지를 수정하세요.`
+              );
+              return;
+            }
+
+            core.info("✅ All commits match policy");
