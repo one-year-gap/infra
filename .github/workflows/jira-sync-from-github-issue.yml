@@ -179,7 +179,8 @@ jobs:
               "♻️ refactor": "refactor", "🎨 style": "style", "✅ test": "test",
               "📕 docs": "docs", "🧹 chore": "chore", "🔧 config": "config",
               "📦 deps": "deps", "🏗️ build": "build", "🚀 deploy": "deploy",
-              "⚡ perf": "perf", "🧪 spike": "spike"
+              "⚡ perf": "perf", "🧪 spike": "spike", "🔄 rename": "rename",
+              "🗑️ remove": "remove", "🔖 init": "init"
             };
             
             const prefix = typeMap[TYPE_LABEL] || "task";
