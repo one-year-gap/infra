@@ -11,7 +11,7 @@
 <br/>
 
 ## 🎫 Jira Ticket
-- Jira Ticket: TR1L-
+- Jira Ticket: HCR-
 
 <br/>
 
