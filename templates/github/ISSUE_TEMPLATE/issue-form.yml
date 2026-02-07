@@ -34,6 +34,9 @@ body:
         - "🛡️ security"
         - "⚡ perf"
         - "🧪 spike"
+        - "🔄 rename"
+        - "🗑️ remove"
+        - "🔖 init"
     validations:
       required: true
   - type: dropdown
