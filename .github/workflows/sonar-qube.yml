@@ -1,0 +1,127 @@
+name: Sonar Cloud
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        type: string
+        required: false
+        default: "17"
+      gradle-args:
+        type: string
+        required: false
+        default: "clean test jacocoTestReport sonar --info"
+      working-directory:
+        type: string
+        required: false
+        default: "."
+      db-name:
+        type: string
+        required: false
+        default: "worker_test"
+      db-user:
+        type: string
+        required: false
+        default: "postgres"
+      db-password:
+        type: string
+        required: false
+        default: "postgres"
+      min-coverage-overall:
+        type: number
+        required: false
+        default: 30
+      min-coverage-changed-files:
+        type: number
+        required: false
+        default: 50
+    secrets:
+      SONAR_TOKEN:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ${{ inputs.db-name }}
+          POSTGRES_USER: ${{ inputs.db-user }}
+          POSTGRES_PASSWORD: ${{ inputs.db-password }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.db-user }} -d ${{ inputs.db-name }}"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build / Test / JaCoCo / Sonar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SPRING_PROFILES_ACTIVE: test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/${{ inputs.db-name }}
+          SPRING_DATASOURCE_USERNAME: ${{ inputs.db-user }}
+          SPRING_DATASOURCE_PASSWORD: ${{ inputs.db-password }}
+          SPRING_BATCH_JDBC_INITIALIZE_SCHEMA: always
+        run: ./gradlew ${{ inputs.gradle-args }}
+
+      - name: Upload JaCoCo HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-html
+          path: ${{ inputs.working-directory }}/build/reports/jacoco/test/html
+
+      - name: Upload JaCoCo XML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-xml
+          path: ${{ inputs.working-directory }}/build/reports/jacoco/test/jacocoTestReport.xml
+
+     
+      - name: Comment coverage to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: madrapps/jacoco-report@v1.7.2
+        with:
+          title: "Test Coverage Report"
+          update-comment: true
+          comment-type: both
+          paths: ${{ github.workspace }}/${{ inputs.working-directory }}/build/reports/jacoco/test/jacocoTestReport.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-coverage-overall: ${{ inputs.min-coverage-overall }}
+          min-coverage-changed-files: ${{ inputs.min-coverage-changed-files }}
