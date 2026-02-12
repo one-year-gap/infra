@@ -97,7 +97,10 @@ jobs:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/${{ inputs.db-name }}
           SPRING_DATASOURCE_USERNAME: ${{ inputs.db-user }}
           SPRING_DATASOURCE_PASSWORD: ${{ inputs.db-password }}
-          SPRING_BATCH_JDBC_INITIALIZE_SCHEMA: always
+          SONAR_SCANNER_OPTS: >-
+            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
+            -Dsonar.pullrequest.branch=${{ github.head_ref }}
+            -Dsonar.pullrequest.base=${{ github.base_ref }}
         run: ./gradlew ${{ inputs.gradle-args }}
 
       - name: Upload JaCoCo HTML report
