@@ -62,8 +62,6 @@ on:
 jobs:
   coverage:
     runs-on: ubuntu-latest
-
-
     permissions:
       contents: read
       pull-requests: write
@@ -72,20 +70,20 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: ${{ inputs.db-name }}
-          POSTGRES_USER: ${{ inputs.db-user }}
-          POSTGRES_PASSWORD: ${{ inputs.db-password }}
+          POSTGRES_DB: ${{ inputs['db-name'] }}
+          POSTGRES_USER: ${{ inputs['db-user'] }}
+          POSTGRES_PASSWORD: ${{ inputs['db-password'] }}
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ${{ inputs.db-user }} -d ${{ inputs.db-name }}"
+          --health-cmd "pg_isready -U ${{ inputs['db-user'] }} -d ${{ inputs['db-name'] }}"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
 
     defaults:
       run:
-        working-directory: ${{ inputs.working-directory }}
+        working-directory: ${{ inputs['working-directory'] }}
 
     steps:
       - name: Checkout
@@ -97,7 +95,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: ${{ inputs.java-version }}
+          java-version: ${{ inputs['java-version'] }}
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -115,38 +113,31 @@ jobs:
       - name: Build / Test / JaCoCo
         env:
           SPRING_PROFILES_ACTIVE: test
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/${{ inputs.db-name }}
-          SPRING_DATASOURCE_USERNAME: ${{ inputs.db-user }}
-          SPRING_DATASOURCE_PASSWORD: ${{ inputs.db-password }}
-        run: ./gradlew ${{ inputs.gradle-args }}
-
-      - name: Upload JUnit report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-test-report
-          path: ${{ inputs.working-directory }}/build/reports/tests/test
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/${{ inputs['db-name'] }}
+          SPRING_DATASOURCE_USERNAME: ${{ inputs['db-user'] }}
+          SPRING_DATASOURCE_PASSWORD: ${{ inputs['db-password'] }}
+        run: ./gradlew ${{ inputs['gradle-args'] }}
 
       - name: Upload JaCoCo HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-html
-          path: ${{ inputs.working-directory }}/build/reports/jacoco/test/html
+          path: ${{ inputs['working-directory'] }}/build/reports/jacoco/test/html
 
       - name: Upload JaCoCo XML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jacoco-xml
-          path: ${{ inputs.working-directory }}/build/reports/jacoco/test/jacocoTestReport.xml
+          path: ${{ inputs['working-directory'] }}/build/reports/jacoco/test/jacocoTestReport.xml
 
-
+      # Reusable workflow에서는 event_name이 workflow_call이라 PR 여부는 payload로 판단
       - name: Collect changed files (PR)
         if: always() && github.event.pull_request != null
         uses: actions/github-script@v7
         env:
-          WD: ${{ inputs.working-directory }}
+          WD: ${{ inputs['working-directory'] }}
         with:
           script: |
             const path = require("path");
@@ -165,9 +156,7 @@ jobs:
             let files = [];
 
             while (true) {
-              const res = await github.rest.pulls.listFiles({
-                owner, repo, pull_number: pr.number, page, per_page
-              });
+              const res = await github.rest.pulls.listFiles({ owner, repo, pull_number: pr.number, page, per_page });
               files = files.concat(res.data.map(f => f.filename));
               if (res.data.length < per_page) break;
               page++;
@@ -177,19 +166,19 @@ jobs:
             fs.writeFileSync(outPath, JSON.stringify(files, null, 2), "utf8");
             core.info(`Saved changed files: ${files.length} -> ${outPath}`);
 
-      - name: Build fancy coverage markdown (B: no fail)
+      - name: Build fancy coverage markdown
         if: always() && github.event.pull_request != null
         id: cov
         env:
-          WD: ${{ inputs.working-directory }}
-          MIN_LINE_OVERALL: ${{ inputs.min-line-overall }}
-          MIN_BRANCH_OVERALL: ${{ inputs.min-branch-overall }}
-          MIN_LINE_CHANGED: ${{ inputs.min-line-changed }}
-          MIN_BRANCH_CHANGED: ${{ inputs.min-branch-changed }}
-          TOPN_CLASSES: ${{ inputs.worst-classes-topn }}
-          TOPN_PACKAGES: ${{ inputs.worst-packages-topn }}
+          WD: ${{ inputs['working-directory'] }}
+          MIN_LINE_OVERALL: ${{ inputs['min-line-overall'] }}
+          MIN_BRANCH_OVERALL: ${{ inputs['min-branch-overall'] }}
+          MIN_LINE_CHANGED: ${{ inputs['min-line-changed'] }}
+          MIN_BRANCH_CHANGED: ${{ inputs['min-branch-changed'] }}
+          TOPN_CLASSES: ${{ inputs['worst-classes-topn'] }}
+          TOPN_PACKAGES: ${{ inputs['worst-packages-topn'] }}
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           import os, json
           import xml.etree.ElementTree as ET
           from datetime import datetime
@@ -198,7 +187,6 @@ jobs:
           xml_path = os.path.join(wd, "build/reports/jacoco/test/jacocoTestReport.xml")
           changed_json_path = os.path.join(wd, "changed_files.json")
 
-          # ratios -> %
           min_line_overall = float(os.getenv("MIN_LINE_OVERALL") or 0.0) * 100.0
           min_branch_overall = float(os.getenv("MIN_BRANCH_OVERALL") or 0.0) * 100.0
           min_line_changed = float(os.getenv("MIN_LINE_CHANGED") or 0.0) * 100.0
@@ -257,7 +245,6 @@ jobs:
             branchp = pct_or_none(bc, bm)
             return linep, branchp, (lm+lc), (bm+bc), (lm, lc, bm, bc)
 
-          # If XML missing, still produce a comment (do not fail)
           if not os.path.exists(xml_path):
             md = f"""## 🧪 Test Coverage Report (JaCoCo)
 
@@ -341,7 +328,6 @@ jobs:
 
               agg_lm += lm; agg_lc += lc
               agg_bm += bm; agg_bc += bc
-
               changed_rows.append((pth, linep, branchp, lines_total))
 
             changed_line = pct_or_none(agg_lc, agg_lm)
@@ -361,8 +347,7 @@ jobs:
 
             def badge(label, value):
               if value is None:
-                val = "N/A"
-                color = "lightgrey"
+                val = "N/A"; color = "lightgrey"
               else:
                 v = float(value)
                 color = "brightgreen" if v >= 80 else ("green" if v >= 60 else ("orange" if v >= 30 else "red"))
@@ -383,20 +368,13 @@ jobs:
               f"Changed **line {min_line_changed:.0f}% / branch {min_branch_changed:.0f}%**  ·  Generated: {now}"
             )
             md.append("")
-
             md.append("| Scope | Line | Branch | Line Graph | Branch Graph | Verdict |")
             md.append("|---|---:|---:|:---:|:---:|:---:|")
-            md.append(
-              f"| **Overall** | **{fmt(overall_line)}** | **{fmt(overall_branch)}** | `{bar(overall_line)}` | `{bar(overall_branch)}` | {overall_line_icon}{overall_branch_icon} |"
-            )
-
+            md.append(f"| **Overall** | **{fmt(overall_line)}** | **{fmt(overall_branch)}** | `{bar(overall_line)}` | `{bar(overall_branch)}` | {overall_line_icon}{overall_branch_icon} |")
             if changed_na:
               md.append(f"| **Changed** | **N/A** | **N/A** | `{'░'*20}` | `{'░'*20}` | ✅✅ |")
             else:
-              md.append(
-                f"| **Changed** | **{fmt(changed_line)}** | **{fmt(changed_branch)}** | `{bar(changed_line)}` | `{bar(changed_branch)}` | {changed_line_icon}{changed_branch_icon} |"
-              )
-
+              md.append(f"| **Changed** | **{fmt(changed_line)}** | **{fmt(changed_branch)}** | `{bar(changed_line)}` | `{bar(changed_branch)}` | {changed_line_icon}{changed_branch_icon} |")
             md.append("")
             if pkg_line_spark:
               md.append(f"**Package line spark (sample)**: `{pkg_line_spark}`")
@@ -404,25 +382,18 @@ jobs:
               md.append(f"**Package branch spark (sample)**: `{pkg_branch_spark}`")
             if pkg_line_spark or pkg_branch_spark:
               md.append("")
-
             md.append(f"### 📦 Package coverage (worst {topn_packages})")
             md.append("| Rank | Package | Line | Branch | Lines | Line Graph | Branch Graph |")
             md.append("|---:|---|---:|---:|---:|:---:|:---:|")
             for i, (pkg_dot, linep, branchp, lines_total, _) in enumerate(worst_pkgs, 1):
-              md.append(
-                f"| {i} | `{pkg_dot}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |"
-              )
+              md.append(f"| {i} | `{pkg_dot}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |")
             md.append("")
-
             md.append(f"### 🧨 Lowest coverage classes (worst {topn_classes})")
             md.append("| Rank | Class | Line | Branch | Lines | Line Graph | Branch Graph |")
             md.append("|---:|---|---:|---:|---:|:---:|:---:|")
             for i, (cn, linep, branchp, lines_total) in enumerate(worst_classes, 1):
-              md.append(
-                f"| {i} | `{cn}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |"
-              )
+              md.append(f"| {i} | `{cn}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |")
             md.append("")
-
             md.append("<details>")
             md.append(f"<summary>🧩 Changed files coverage breakdown ({len(changed_java)} files)</summary>")
             md.append("")
@@ -433,9 +404,7 @@ jobs:
               md.append("|---|---:|---:|---:|:---:|:---:|:---:|")
               for pth, linep, branchp, lines_total in sorted(changed_rows, key=lambda x: (x[1] if x[1] is not None else 101)):
                 verdict = f"{ok_icon(linep, min_line_changed)}{ok_icon(branchp, min_branch_changed)}"
-                md.append(
-                  f"| `{pth}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | {verdict} | `{bar(linep)}` | `{bar(branchp)}` |"
-                )
+                md.append(f"| `{pth}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | {verdict} | `{bar(linep)}` | `{bar(branchp)}` |")
             md.append("")
             md.append("</details>")
             md.append("")
@@ -443,16 +412,12 @@ jobs:
             md.append("🔎 HTML 리포트: Actions → Artifacts → `jacoco-html`  ·  XML: `jacoco-xml`")
             md.append("")
 
-            out_md = "\n".join(md)
             with open(os.path.join(wd, "coverage_comment.md"), "w", encoding="utf-8") as f:
-              f.write(out_md)
+              f.write("\n".join(md))
 
-          # Write to GITHUB_OUTPUT safely (multiline)
           out_path = os.environ["GITHUB_OUTPUT"]
-          body_path = os.path.join(wd, "coverage_comment.md")
-          with open(body_path, "r", encoding="utf-8") as f:
+          with open(os.path.join(wd, "coverage_comment.md"), "r", encoding="utf-8") as f:
             body = f.read()
-
           with open(out_path, "a", encoding="utf-8") as out:
             out.write("markdown<<EOF\n")
             out.write(body)
@@ -469,24 +434,15 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pr = context.payload.pull_request;
-            if (!pr) {
-              core.info("No pull_request payload. Skip comment.");
-              return;
-            }
+            if (!pr) return;
 
             const marker = "<!-- JACOCO_FANCY_COVERAGE -->";
             const body = (process.env.BODY || "").trim();
             if (!body) return;
 
             const content = `${marker}\n${body}`;
-
-            const comments = await github.rest.issues.listComments({
-              owner, repo, issue_number: pr.number, per_page: 100
-            });
-
-            const mine = comments.data.find(c =>
-              c.user?.login === "github-actions[bot]" && c.body?.includes(marker)
-            );
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: pr.number, per_page: 100 });
+            const mine = comments.data.find(c => c.user?.login === "github-actions[bot]" && c.body?.includes(marker));
 
             if (mine) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: content });
