@@ -38,6 +38,8 @@ on:
     secrets:
       SONAR_TOKEN:
         required: true
+      GITHUB_TOKEN:
+        required: true
 
 jobs:
   build:
@@ -46,6 +48,7 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
+      statuses: write
 
     services:
       postgres:
