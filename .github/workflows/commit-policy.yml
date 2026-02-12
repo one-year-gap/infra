@@ -70,6 +70,14 @@ jobs:
             const bad = [];
             for (const c of commits) {
               const firstLine = (c.commit.message || "").split("\n")[0].trim();
+              const isMergeCommitByParents = (c.parents && c.parents.length > 1);
+              const isMergeCommitByMessage = /^Merge\b/i.test(firstLine); 
+
+              if (isMergeCommitByParents || isMergeCommitByMessage) {
+                core.info(`Skip merge commit: ${c.sha.slice(0, 7)} ${firstLine}`);
+                continue;
+              }
+              
               if (!firstLine.startsWith(expectedPrefix)) {
                 bad.push({ sha: c.sha.slice(0,7), msg: firstLine });
               }
