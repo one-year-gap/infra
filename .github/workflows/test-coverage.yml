@@ -1,4 +1,4 @@
-name: JaCoCo Coverage (PR Comment)
+name: Test Coverage (JaCoCo) - Reusable
 
 on:
   workflow_call:
@@ -16,7 +16,6 @@ on:
       gradle-args:
         type: string
         required: false
-  
         default: "clean test jacocoTestReport --info"
 
       db-name:
@@ -32,7 +31,7 @@ on:
         required: false
         default: "postgres"
 
-      # ===== Coverage thresholds (ratio: 0.0 ~ 1.0) =====
+      # thresholds are ratios (0.0 ~ 1.0)
       min-line-overall:
         type: number
         required: false
@@ -42,7 +41,6 @@ on:
         required: false
         default: 0.5
 
-      # changed files
       min-line-changed:
         type: number
         required: false
@@ -52,7 +50,6 @@ on:
         required: false
         default: 0.5
 
-      # ranking options
       worst-classes-topn:
         type: number
         required: false
@@ -63,13 +60,13 @@ on:
         default: 10
 
 jobs:
-  build:
+  coverage:
     runs-on: ubuntu-latest
+
+
     permissions:
       contents: read
       pull-requests: write
-      checks: write
-      statuses: write
 
     services:
       postgres:
@@ -101,6 +98,16 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ inputs.java-version }}
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
@@ -134,9 +141,9 @@ jobs:
           name: jacoco-xml
           path: ${{ inputs.working-directory }}/build/reports/jacoco/test/jacocoTestReport.xml
 
-      # ===== Collect changed files (PR only) =====
+
       - name: Collect changed files (PR)
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event.pull_request != null
         uses: actions/github-script@v7
         env:
           WD: ${{ inputs.working-directory }}
@@ -148,14 +155,19 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pr = context.payload.pull_request;
-            if (!pr) return;
+            if (!pr) {
+              core.info("No pull_request payload. Skip changed files.");
+              return;
+            }
 
             let page = 1;
             const per_page = 100;
             let files = [];
 
             while (true) {
-              const res = await github.rest.pulls.listFiles({ owner, repo, pull_number: pr.number, page, per_page });
+              const res = await github.rest.pulls.listFiles({
+                owner, repo, pull_number: pr.number, page, per_page
+              });
               files = files.concat(res.data.map(f => f.filename));
               if (res.data.length < per_page) break;
               page++;
@@ -165,18 +177,15 @@ jobs:
             fs.writeFileSync(outPath, JSON.stringify(files, null, 2), "utf8");
             core.info(`Saved changed files: ${files.length} -> ${outPath}`);
 
-      # ===== Build fancy markdown (B: never fail) =====
       - name: Build fancy coverage markdown (B: no fail)
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event.pull_request != null
         id: cov
         env:
           WD: ${{ inputs.working-directory }}
-
           MIN_LINE_OVERALL: ${{ inputs.min-line-overall }}
           MIN_BRANCH_OVERALL: ${{ inputs.min-branch-overall }}
           MIN_LINE_CHANGED: ${{ inputs.min-line-changed }}
           MIN_BRANCH_CHANGED: ${{ inputs.min-branch-changed }}
-
           TOPN_CLASSES: ${{ inputs.worst-classes-topn }}
           TOPN_PACKAGES: ${{ inputs.worst-packages-topn }}
         run: |
@@ -189,6 +198,7 @@ jobs:
           xml_path = os.path.join(wd, "build/reports/jacoco/test/jacocoTestReport.xml")
           changed_json_path = os.path.join(wd, "changed_files.json")
 
+          # ratios -> %
           min_line_overall = float(os.getenv("MIN_LINE_OVERALL") or 0.0) * 100.0
           min_branch_overall = float(os.getenv("MIN_BRANCH_OVERALL") or 0.0) * 100.0
           min_line_changed = float(os.getenv("MIN_LINE_CHANGED") or 0.0) * 100.0
@@ -223,7 +233,6 @@ jobs:
             return "".join(out)
 
           def ok_icon(value, threshold):
-            
             if value is None:
               return "✅"
             return "✅" if value >= threshold else "⚠️"
@@ -248,24 +257,23 @@ jobs:
             branchp = pct_or_none(bc, bm)
             return linep, branchp, (lm+lc), (bm+bc), (lm, lc, bm, bc)
 
+          # If XML missing, still produce a comment (do not fail)
           if not os.path.exists(xml_path):
             md = f"""## 🧪 Test Coverage Report (JaCoCo)
+
           ❗ JaCoCo XML not found: `{xml_path}`
 
-          - Ensure Gradle task includes: `jacocoTestReport`
-          - Expected: `build/reports/jacoco/test/jacocoTestReport.xml`
+          - Ensure Gradle args include: `jacocoTestReport`
+          - Expected XML: `build/reports/jacoco/test/jacocoTestReport.xml`
           """
-            out_file = os.path.join(wd, "coverage_comment.md")
-            with open(out_file, "w", encoding="utf-8") as f:
+            with open(os.path.join(wd, "coverage_comment.md"), "w", encoding="utf-8") as f:
               f.write(md)
           else:
             tree = ET.parse(xml_path)
             root = tree.getroot()
 
-            # Overall
-            overall_line, overall_branch, overall_lines_total, overall_branches_total, overall_raw = get_line_branch(root)
+            overall_line, overall_branch, _, _, _ = get_line_branch(root)
 
-            # Changed files list
             changed_files = []
             if os.path.exists(changed_json_path):
               with open(changed_json_path, "r", encoding="utf-8") as f:
@@ -273,10 +281,9 @@ jobs:
 
             changed_java = [p for p in changed_files if p.endswith(".java") and "src/main/java/" in p]
 
-            # Build sourcefile index: (pkg_slash, filename) -> (linep, branchp, totals, raw)
             srcfile_index = {}
-            pkg_stats = []      # (pkg_dot, linep, branchp, lines_total)
-            class_stats = []    # (class_fqcn, linep, branchp, lines_total)
+            pkg_stats = []
+            class_stats = []
 
             for pkg in root.findall("package"):
               pkg_slash = pkg.attrib.get("name", "")
@@ -286,24 +293,21 @@ jobs:
 
               for sf in pkg.findall("sourcefile"):
                 name = sf.attrib.get("name", "")
-                sf_line, sf_branch, sf_lines_total, sf_br_total, raw = get_line_branch(sf)
-                srcfile_index[(pkg_slash, name)] = (sf_line, sf_branch, sf_lines_total, sf_br_total, raw)
+                sf_line, sf_branch, sf_lines_total, _, raw = get_line_branch(sf)
+                srcfile_index[(pkg_slash, name)] = (sf_line, sf_branch, sf_lines_total, raw)
 
               for cl in pkg.findall("class"):
                 cn = cl.attrib.get("name", "").replace("/", ".")
                 c_line, c_branch, c_lines_total, _, _ = get_line_branch(cl)
-                # 너무 작은 클래스는 랭킹 왜곡이 심해서 제외(원하면 5~20으로 조절)
                 if c_lines_total >= 10:
                   class_stats.append((cn, c_line, c_branch, c_lines_total))
 
-            # Worst packages/classes (by line coverage primarily)
             pkg_stats_sorted = sorted(pkg_stats, key=lambda x: ((x[1] if x[1] is not None else 101), -x[3]))
             worst_pkgs = pkg_stats_sorted[:topn_packages]
 
             class_stats_sorted = sorted(class_stats, key=lambda x: ((x[1] if x[1] is not None else 101), -x[3]))
             worst_classes = class_stats_sorted[:topn_classes]
 
-            # Helpers for changed aggregation
             def split_java_path(p):
               after = p.split("src/main/java/", 1)[1]
               parts = after.split("/")
@@ -312,7 +316,6 @@ jobs:
               pkg = "/".join(parts[:-1])
               return (pkg, parts[-1])
 
-            # Aggregate changed coverage using sourcefile counters
             agg_lm = agg_lc = agg_bm = agg_bc = 0
             changed_rows = []
 
@@ -321,14 +324,13 @@ jobs:
               key = (pkg_slash, fname)
 
               if key in srcfile_index:
-                linep, branchp, lines_total, _, raw = srcfile_index[key]
+                linep, branchp, lines_total, raw = srcfile_index[key]
                 lm, lc, bm, bc = raw
               else:
-                # fallback: same filename anywhere (approx aggregate)
                 matches = [v for k,v in srcfile_index.items() if k[1] == fname]
                 if matches:
-                  lm = sum(m[4][0] for m in matches); lc = sum(m[4][1] for m in matches)
-                  bm = sum(m[4][2] for m in matches); bc = sum(m[4][3] for m in matches)
+                  lm = sum(m[3][0] for m in matches); lc = sum(m[3][1] for m in matches)
+                  bm = sum(m[3][2] for m in matches); bc = sum(m[3][3] for m in matches)
                   linep = pct_or_none(lc, lm)
                   branchp = pct_or_none(bc, bm)
                   lines_total = lm + lc
@@ -340,31 +342,24 @@ jobs:
               agg_lm += lm; agg_lc += lc
               agg_bm += bm; agg_bc += bc
 
-              status = ok_icon(linep, min_line_changed)
-              changed_rows.append((pth, linep, branchp, lines_total, status))
+              changed_rows.append((pth, linep, branchp, lines_total))
 
             changed_line = pct_or_none(agg_lc, agg_lm)
             changed_branch = pct_or_none(agg_bc, agg_bm)
             changed_na = (len(changed_java) == 0)
 
-            # Sparkline samples
             pkg_sample = sorted(pkg_stats, key=lambda x: x[0])[:30]
             pkg_line_spark = spark([p[1] for p in pkg_sample]) if pkg_sample else ""
             pkg_branch_spark = spark([p[2] for p in pkg_sample]) if pkg_sample else ""
 
-            # Compose markdown
             now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
             overall_line_icon = ok_icon(overall_line, min_line_overall)
             overall_branch_icon = ok_icon(overall_branch, min_branch_overall)
-
-            # Changed verdict
             changed_line_icon = "✅" if changed_na else ok_icon(changed_line, min_line_changed)
             changed_branch_icon = "✅" if changed_na else ok_icon(changed_branch, min_branch_changed)
 
-            # Badges (shields.io)
             def badge(label, value):
-              # value: percent string, N/A => no badge value
               if value is None:
                 val = "N/A"
                 color = "lightgrey"
@@ -372,25 +367,35 @@ jobs:
                 v = float(value)
                 color = "brightgreen" if v >= 80 else ("green" if v >= 60 else ("orange" if v >= 30 else "red"))
                 val = f"{v}%"
-              # URL encoding of %
               val_enc = val.replace("%", "%25")
               label = label.replace("-", "--").replace("_", "__")
               return f"![{label}](https://img.shields.io/badge/{label}-{val_enc}-{color})"
 
             md = []
             md.append("## 🧪 Test Coverage Report (JaCoCo)")
-            md.append(f"{badge('overall_line', overall_line)} {badge('overall_branch', overall_branch)}  {badge('changed_line', (None if changed_na else changed_line))} {badge('changed_branch', (None if changed_na else changed_branch))}")
-            md.append(f"> 기준(soft, workflow는 실패 안 함): Overall **line {min_line_overall:.0f}% / branch {min_branch_overall:.0f}%**, Changed **line {min_line_changed:.0f}% / branch {min_branch_changed:.0f}%**  ·  Generated: {now}")
+            md.append(
+              f"{badge('overall_line', overall_line)} {badge('overall_branch', overall_branch)}  "
+              f"{badge('changed_line', (None if changed_na else changed_line))} {badge('changed_branch', (None if changed_na else changed_branch))}"
+            )
+            md.append(
+              f"> 기준(soft, workflow는 실패 안 함): "
+              f"Overall **line {min_line_overall:.0f}% / branch {min_branch_overall:.0f}%**, "
+              f"Changed **line {min_line_changed:.0f}% / branch {min_branch_changed:.0f}%**  ·  Generated: {now}"
+            )
             md.append("")
 
             md.append("| Scope | Line | Branch | Line Graph | Branch Graph | Verdict |")
             md.append("|---|---:|---:|:---:|:---:|:---:|")
-            md.append(f"| **Overall** | **{fmt(overall_line)}** | **{fmt(overall_branch)}** | `{bar(overall_line)}` | `{bar(overall_branch)}` | {overall_line_icon}{overall_branch_icon} |")
+            md.append(
+              f"| **Overall** | **{fmt(overall_line)}** | **{fmt(overall_branch)}** | `{bar(overall_line)}` | `{bar(overall_branch)}` | {overall_line_icon}{overall_branch_icon} |"
+            )
 
             if changed_na:
               md.append(f"| **Changed** | **N/A** | **N/A** | `{'░'*20}` | `{'░'*20}` | ✅✅ |")
             else:
-              md.append(f"| **Changed** | **{fmt(changed_line)}** | **{fmt(changed_branch)}** | `{bar(changed_line)}` | `{bar(changed_branch)}` | {changed_line_icon}{changed_branch_icon} |")
+              md.append(
+                f"| **Changed** | **{fmt(changed_line)}** | **{fmt(changed_branch)}** | `{bar(changed_line)}` | `{bar(changed_branch)}` | {changed_line_icon}{changed_branch_icon} |"
+              )
 
             md.append("")
             if pkg_line_spark:
@@ -400,23 +405,24 @@ jobs:
             if pkg_line_spark or pkg_branch_spark:
               md.append("")
 
-            # Package ranking
             md.append(f"### 📦 Package coverage (worst {topn_packages})")
             md.append("| Rank | Package | Line | Branch | Lines | Line Graph | Branch Graph |")
             md.append("|---:|---|---:|---:|---:|:---:|:---:|")
             for i, (pkg_dot, linep, branchp, lines_total, _) in enumerate(worst_pkgs, 1):
-              md.append(f"| {i} | `{pkg_dot}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |")
+              md.append(
+                f"| {i} | `{pkg_dot}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |"
+              )
             md.append("")
 
-            # Worst classes
             md.append(f"### 🧨 Lowest coverage classes (worst {topn_classes})")
             md.append("| Rank | Class | Line | Branch | Lines | Line Graph | Branch Graph |")
             md.append("|---:|---|---:|---:|---:|:---:|:---:|")
             for i, (cn, linep, branchp, lines_total) in enumerate(worst_classes, 1):
-              md.append(f"| {i} | `{cn}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |")
+              md.append(
+                f"| {i} | `{cn}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | `{bar(linep)}` | `{bar(branchp)}` |"
+              )
             md.append("")
 
-            # Changed breakdown
             md.append("<details>")
             md.append(f"<summary>🧩 Changed files coverage breakdown ({len(changed_java)} files)</summary>")
             md.append("")
@@ -425,9 +431,11 @@ jobs:
             else:
               md.append("| File | Line | Branch | Lines | Verdict | Line Graph | Branch Graph |")
               md.append("|---|---:|---:|---:|:---:|:---:|:---:|")
-              for pth, linep, branchp, lines_total, status in sorted(changed_rows, key=lambda x: (x[1] if x[1] is not None else 101)):
+              for pth, linep, branchp, lines_total in sorted(changed_rows, key=lambda x: (x[1] if x[1] is not None else 101)):
                 verdict = f"{ok_icon(linep, min_line_changed)}{ok_icon(branchp, min_branch_changed)}"
-                md.append(f"| `{pth}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | {verdict} | `{bar(linep)}` | `{bar(branchp)}` |")
+                md.append(
+                  f"| `{pth}` | **{fmt(linep)}** | **{fmt(branchp)}** | {lines_total} | {verdict} | `{bar(linep)}` | `{bar(branchp)}` |"
+                )
             md.append("")
             md.append("</details>")
             md.append("")
@@ -436,30 +444,23 @@ jobs:
             md.append("")
 
             out_md = "\n".join(md)
-            out_file = os.path.join(wd, "coverage_comment.md")
-            with open(out_file, "w", encoding="utf-8") as f:
+            with open(os.path.join(wd, "coverage_comment.md"), "w", encoding="utf-8") as f:
               f.write(out_md)
 
-          # output as step output
-          print("::group::coverage_comment.md")
-          with open(os.path.join(wd, "coverage_comment.md"), "r", encoding="utf-8") as f:
-            print(f.read())
-          print("::endgroup::")
-
-          # write to GITHUB_OUTPUT
+          # Write to GITHUB_OUTPUT safely (multiline)
           out_path = os.environ["GITHUB_OUTPUT"]
-          with open(os.path.join(wd, "coverage_comment.md"), "r", encoding="utf-8") as f:
+          body_path = os.path.join(wd, "coverage_comment.md")
+          with open(body_path, "r", encoding="utf-8") as f:
             body = f.read()
 
           with open(out_path, "a", encoding="utf-8") as out:
-            out.write("markdown<<'EOF'\n")
+            out.write("markdown<<EOF\n")
             out.write(body)
             out.write("\nEOF\n")
           PY
 
-      # ===== Comment upsert =====
       - name: Post/Update fancy coverage comment
-        if: always() && github.event_name == 'pull_request'
+        if: always() && github.event.pull_request != null
         uses: actions/github-script@v7
         env:
           BODY: ${{ steps.cov.outputs.markdown }}
@@ -468,7 +469,10 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pr = context.payload.pull_request;
-            if (!pr) return;
+            if (!pr) {
+              core.info("No pull_request payload. Skip comment.");
+              return;
+            }
 
             const marker = "<!-- JACOCO_FANCY_COVERAGE -->";
             const body = (process.env.BODY || "").trim();
