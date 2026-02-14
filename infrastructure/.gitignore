@@ -1,5 +1,7 @@
 .classpath.txt
 target
+build
+.gradle
 .classpath
 .project
 .idea
@@ -10,4 +12,3 @@ target
 # CDK asset staging directory
 .cdk.staging
 cdk.out
-
