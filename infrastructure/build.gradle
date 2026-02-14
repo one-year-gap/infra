@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id 'application'
+    id 'jacoco'
 }
 
 group = 'com.myorg'
@@ -29,4 +30,61 @@ application {
 
 test {
     useJUnitPlatform()
+    finalizedBy tasks.named("jacocoTestReport")
+}
+
+jacoco {
+    toolVersion = "0.8.14"
+}
+
+def jacocoExcludes = [
+        // AWS CDK entrypoint/bootstrap classes
+        '**/*App*',
+        '**/InfrastructureApp*',
+
+        // Configuration package
+        '**/config/**',
+        '**/*Config*',
+        '**/*Configuration*',
+]
+
+tasks.named("jacocoTestReport", JacocoReport) {
+    dependsOn tasks.named("test")
+
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+
+    classDirectories.setFrom(
+            files(classDirectories.files.collect { dir ->
+                fileTree(dir: dir, exclude: jacocoExcludes)
+            })
+    )
+}
+
+tasks.named("jacocoTestCoverageVerification", JacocoCoverageVerification) {
+    enabled = false
+
+    classDirectories.setFrom(
+            files(classDirectories.files.collect { dir ->
+                fileTree(dir: dir, exclude: jacocoExcludes)
+            })
+    )
+
+    violationRules {
+        rule {
+            enabled = true
+            element = 'BUNDLE'
+            limit {
+                counter = 'BRANCH'
+                value = 'COVEREDRATIO'
+            }
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+            }
+        }
+    }
 }
