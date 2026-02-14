@@ -1,0 +1,92 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'jacoco'
+}
+
+group = 'com.myorg'
+version = '0.1'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'software.amazon.awscdk:aws-cdk-lib:2.238.0'
+    implementation 'software.constructs:constructs:10.4.2'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.7.1'
+}
+
+application {
+    mainClass = 'com.myorg.InfrastructureApp'
+}
+
+test {
+    useJUnitPlatform()
+    finalizedBy tasks.named("jacocoTestReport")
+}
+
+jacoco {
+    toolVersion = "0.8.14"
+}
+
+def jacocoExcludes = [
+        // AWS CDK entrypoint/bootstrap classes
+        '**/*App*',
+        '**/InfrastructureApp*',
+
+        // Configuration package
+        '**/config/**',
+        '**/*Config*',
+        '**/*Configuration*',
+]
+
+tasks.named("jacocoTestReport", JacocoReport) {
+    dependsOn tasks.named("test")
+
+    reports {
+        xml.required = true
+        html.required = true
+        csv.required = false
+    }
+
+    classDirectories.setFrom(
+            files(classDirectories.files.collect { dir ->
+                fileTree(dir: dir, exclude: jacocoExcludes)
+            })
+    )
+}
+
+tasks.named("jacocoTestCoverageVerification", JacocoCoverageVerification) {
+    enabled = false
+
+    classDirectories.setFrom(
+            files(classDirectories.files.collect { dir ->
+                fileTree(dir: dir, exclude: jacocoExcludes)
+            })
+    )
+
+    violationRules {
+        rule {
+            enabled = true
+            element = 'BUNDLE'
+            limit {
+                counter = 'BRANCH'
+                value = 'COVEREDRATIO'
+                minimum=0.7
+            }
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum=0.7
+            }
+        }
+    }
+}

@@ -1,0 +1,27 @@
+plugins {
+    id 'base'
+}
+
+tasks.register('test') {
+    group = 'verification'
+    description = 'Runs tests for infrastructure module.'
+    dependsOn(':infrastructure:test')
+}
+
+tasks.register('jacocoTestReport') {
+    group = 'verification'
+    description = 'Generates JaCoCo report for infrastructure module.'
+    dependsOn(':infrastructure:jacocoTestReport', 'syncInfrastructureJacocoReports')
+}
+
+tasks.named('clean') {
+    dependsOn(':infrastructure:clean')
+}
+
+tasks.register('syncInfrastructureJacocoReports', Sync) {
+    group = 'verification'
+    description = 'Syncs infrastructure JaCoCo report to root build/reports for CI compatibility.'
+    dependsOn(':infrastructure:jacocoTestReport')
+    from(layout.projectDirectory.dir('infrastructure/build/reports/jacoco/test'))
+    into(layout.buildDirectory.dir('reports/jacoco/test'))
+}
