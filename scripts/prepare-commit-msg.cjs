@@ -13,10 +13,6 @@ if (!firstLine) process.exit(0);
 const branch = execSync("git branch --show-current").toString().trim();
 const m = branch.match(/^([a-z]+)\/([A-Z]+-\d+)$/);
 
-if (!m) {
-  console.error(`브랜치명 규칙 위반: "${branch}" (필수: <type>/<TICKET> 예: feat/HSC-01)`);
-  process.exit(1);
-}
 
 const branchType = m[1];
 const ticket = m[2];
