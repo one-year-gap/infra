@@ -1,7 +1,7 @@
 name: test-coverage
 
 on:
-  pull_request:
+  pull_request: [opened]
 #
 permissions:
   contents: read
@@ -14,5 +14,5 @@ jobs:
       working-directory: .
       min-line-overall: 0.7
       min-branch-overall: 0.7
-      min-line-changed: 0.5
-      min-branch-changed: 0.5
+      min-line-changed: 0.8
+      min-branch-changed: 0.8
