@@ -24,6 +24,7 @@ jobs:
             const fs = require('fs');
            
             const targetRepos = ['api-server','counselor-fe','admin-fe','customer-fe','infra','worker','docs']; 
+            const targetBranch = 'dev';
             
             const issueTemplate = fs.readFileSync('templates/github/ISSUE_TEMPLATE/issue-form.yml', 'utf8');
             const prTemplate = fs.readFileSync('templates/github/pull_request_template.md', 'utf8');
@@ -37,7 +38,8 @@ jobs:
                 path: '.github/ISSUE_TEMPLATE/issue-form.yml',
                 message: 'chore: sync issue template from infra',
                 content: Buffer.from(issueTemplate).toString('base64'),
-                sha: await getSha(owner, repo, '.github/ISSUE_TEMPLATE/issue-form.yml')
+                sha: await getSha(owner, repo, '.github/ISSUE_TEMPLATE/issue-form.yml'),
+                branch: targetBranch
               });
 
               
@@ -46,7 +48,8 @@ jobs:
                 path: '.github/pull_request_template.md',
                 message: 'chore: sync PR template from infra',
                 content: Buffer.from(prTemplate).toString('base64'),
-                sha: await getSha(owner, repo, '.github/pull_request_template.md')
+                sha: await getSha(owner, repo, '.github/pull_request_template.md'),
+                branch: targetBranch
               });
             }
 
