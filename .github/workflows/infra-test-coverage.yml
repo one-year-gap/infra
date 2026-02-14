@@ -1,0 +1,19 @@
+name: test-coverage
+
+on:
+  pull_request:
+    types: [opened]
+#
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage:
+    uses: one-year-gap/infra/.github/workflows/test-coverage.yml@main
+    with:
+      working-directory: .
+      min-line-overall: 0.7
+      min-branch-overall: 0.7
+      min-line-changed: 0.8
+      min-branch-changed: 0.8
