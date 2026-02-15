@@ -32,6 +32,12 @@ public class EcrStack extends Stack {
                                                 .tagStatus(TagStatus.UNTAGGED)
                                                 .description("expire untagged images after 7 days")
                                                 .maxImageAge(Duration.days(7))
+                                                .build(),
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.ANY)
+                                                .description("maintain latest images 10")
+                                                .maxImageCount(10)
                                                 .build())
                         )
                         .build()
@@ -52,6 +58,12 @@ public class EcrStack extends Stack {
                                                 .tagStatus(TagStatus.UNTAGGED)
                                                 .description("expire untagged images after 7 days")
                                                 .maxImageAge(Duration.days(7))
+                                                .build(),
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.ANY)
+                                                .description("maintain latest images 10")
+                                                .maxImageCount(10)
                                                 .build())
                         )
                         .build()
