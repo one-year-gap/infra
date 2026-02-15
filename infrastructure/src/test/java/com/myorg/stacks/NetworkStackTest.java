@@ -4,7 +4,6 @@ import com.myorg.config.NetworkStackConfig;
 import org.junit.jupiter.api.*;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.StackProps;
-import software.amazon.awscdk.assertions.Match;
 import software.amazon.awscdk.assertions.Template;
 import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
@@ -13,6 +12,11 @@ import java.util.Map;
 
 class NetworkStackTest {
     private Template template;
+    private String customerAlbSgLogicalId;
+    private String customerApiSgLogicalId;
+    private String adminAlbSgLogicalId;
+    private String adminWebSgLogicalId;
+    private String adminApiSgLogicalId;
 
     private static final List<String> allowedIpsList = List.of(
             "203.0.113.10/32",
@@ -40,6 +44,133 @@ class NetworkStackTest {
                 app, "TestNetworkStack", StackProps.builder().build(), config);
 
         template = Template.fromStack(stack);
+
+        customerAlbSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Customer Application Load Balancer Security Group");
+        customerApiSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Customer API Server Security Group");
+        adminAlbSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Admin Application Load Balancer Security Group");
+        adminWebSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Admin Web(ECS) Security Group");
+        adminApiSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Admin API Server(ECS) Security Group");
+    }
+
+    @SuppressWarnings("unchecked")
+    private String findSecurityGroupLogicalIdByDescription(String description) {
+        Map<String, Object> securityGroups = (Map<String, Object>) (Map<?, ?>) template
+                .findResources("AWS::EC2::SecurityGroup");
+
+        return securityGroups.entrySet().stream()
+                .filter(entry -> {
+                    Map<String, Object> props = resourceProperties(entry.getValue());
+                    return description.equals(props.get("GroupDescription"));
+                })
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("SecurityGroup not found: " + description));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> resourceProperties(Object resource) {
+        return (Map<String, Object>) ((Map<?, ?>) resource).get("Properties");
+    }
+
+    private static String referencedLogicalId(Object token) {
+        if (token instanceof String str) {
+            return str;
+        }
+        if (!(token instanceof Map<?, ?> map)) {
+            return null;
+        }
+
+        Object ref = map.get("Ref");
+        if (ref != null) {
+            return ref.toString();
+        }
+
+        Object getAtt = map.get("Fn::GetAtt");
+        if (getAtt instanceof List<?> list && !list.isEmpty()) {
+            return list.get(0).toString();
+        }
+        if (getAtt instanceof String str) {
+            int dot = str.indexOf('.');
+            return dot >= 0 ? str.substring(0, dot) : str;
+        }
+        return null;
+    }
+
+    private static int intProp(Map<String, Object> props, String key) {
+        Object value = props.get(key);
+        if (!(value instanceof Number number)) {
+            throw new AssertionError("Expected number for '" + key + "' but was: " + value);
+        }
+        return number.intValue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> ingressRulesFor(String sgLogicalId) {
+        Map<String, Object> ingress = (Map<String, Object>) (Map<?, ?>) template
+                .findResources("AWS::EC2::SecurityGroupIngress");
+
+        return ingress.values().stream()
+                .map(NetworkStackTest::resourceProperties)
+                .filter(props -> sgLogicalId.equals(referencedLogicalId(props.get("GroupId"))))
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> egressRulesFor(String sgLogicalId) {
+        Map<String, Object> egress = (Map<String, Object>) (Map<?, ?>) template
+                .findResources("AWS::EC2::SecurityGroupEgress");
+
+        return egress.values().stream()
+                .map(NetworkStackTest::resourceProperties)
+                .filter(props -> sgLogicalId.equals(referencedLogicalId(props.get("GroupId"))))
+                .toList();
+    }
+
+    private void assertIngressCidrRule(String sgLogicalId, int port, String cidrIp) {
+        assertThat(ingressRulesFor(sgLogicalId))
+                .anySatisfy(props -> {
+                    assertThat(props.get("IpProtocol")).isEqualTo("tcp");
+                    assertThat(intProp(props, "FromPort")).isEqualTo(port);
+                    assertThat(intProp(props, "ToPort")).isEqualTo(port);
+                    assertThat(props.get("CidrIp")).isEqualTo(cidrIp);
+                });
+    }
+
+    private void assertIngressFromSecurityGroup(String targetSgLogicalId, String sourceSgLogicalId, int port) {
+        assertThat(ingressRulesFor(targetSgLogicalId))
+                .anySatisfy(props -> {
+                    assertThat(props.get("IpProtocol")).isEqualTo("tcp");
+                    assertThat(intProp(props, "FromPort")).isEqualTo(port);
+                    assertThat(intProp(props, "ToPort")).isEqualTo(port);
+                    assertThat(referencedLogicalId(props.get("SourceSecurityGroupId")))
+                            .isEqualTo(sourceSgLogicalId);
+                });
+    }
+
+    private void assertEgressCidrRule(String sgLogicalId, String ipProtocol, int port, String cidrIp) {
+        assertThat(egressRulesFor(sgLogicalId))
+                .anySatisfy(props -> {
+                    assertThat(props.get("IpProtocol")).isEqualTo(ipProtocol);
+                    assertThat(intProp(props, "FromPort")).isEqualTo(port);
+                    assertThat(intProp(props, "ToPort")).isEqualTo(port);
+                    assertThat(props.get("CidrIp")).isEqualTo(cidrIp);
+                });
+    }
+
+    private void assertEgressToSecurityGroup(String sourceSgLogicalId, String destinationSgLogicalId, int port) {
+        assertThat(egressRulesFor(sourceSgLogicalId))
+                .anySatisfy(props -> {
+                    assertThat(props.get("IpProtocol")).isEqualTo("tcp");
+                    assertThat(intProp(props, "FromPort")).isEqualTo(port);
+                    assertThat(intProp(props, "ToPort")).isEqualTo(port);
+                    assertThat(referencedLogicalId(props.get("DestinationSecurityGroupId")))
+                            .isEqualTo(destinationSgLogicalId);
+                });
     }
 
     @Nested
@@ -76,31 +207,13 @@ class NetworkStackTest {
         @DisplayName("HTTP(80) 인바운드는 모든 IP에서 허용한다.")
         @Test
         void should_allowed_all_http_request_anywhere(){
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress",Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol","tcp",
-                                    "FromPort",80,
-                                    "ToPort",80,
-                                    "CidrIp","0.0.0.0/0"
-                            ))
-                    )))
-            ));
+            assertIngressCidrRule(customerAlbSgLogicalId, 80, "0.0.0.0/0");
         }
 
         @Test
         @DisplayName("HTTPS(443) 인바운드를 모든 IP에서 허용한다")
         void shouldAllowHttpsFromAnywhere() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", 443,
-                                    "ToPort", 443,
-                                    "CidrIp", "0.0.0.0/0"
-                            ))
-                    )))
-            ));
+            assertIngressCidrRule(customerAlbSgLogicalId, 443, "0.0.0.0/0");
         }
     }
 
@@ -110,133 +223,54 @@ class NetworkStackTest {
         @Test
         @DisplayName("customer ALB Security Group에서만 8080 inbound를 허용한다.")
         void should_allow_inbound_customer_alb_only(){
-            template.hasResourceProperties("AWS::EC2::SecurityGroup",Match.objectLike(
-                    Map.of("SecurityGroupIngress",Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol","tcp",
-                                    "FromPort",CUSTOMER_SERVER_PORT,
-                                    "ToPort",CUSTOMER_SERVER_PORT
-                            ))
-                    )))
-            ));
+            assertIngressFromSecurityGroup(customerApiSgLogicalId, customerAlbSgLogicalId, CUSTOMER_SERVER_PORT);
         }
 
         @Test
         @DisplayName("HTTPS(443) 아웃바운드를 허용한다")
         void shouldAllowHttpsOutbound() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupEgress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", 443,
-                                    "ToPort", 443,
-                                    "CidrIp", "0.0.0.0/0"
-                            ))
-                    )))
-            ));
+            assertEgressCidrRule(customerApiSgLogicalId, "tcp", 443, "0.0.0.0/0");
         }
 
         @Test
         @DisplayName("DNS(53) 아웃바운드를 허용한다")
         void shouldAllowDnsOutbound() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupEgress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", 53,
-                                    "ToPort", 53,
-                                    "CidrIp", "0.0.0.0/0"
-                            ))
-                    )))
-            ));
+            assertEgressCidrRule(customerApiSgLogicalId, "tcp", 53, "0.0.0.0/0");
         }
     }
     @Nested
-    @DisplayName("Admin API Security Group")
-    class AdminApiSecurityGroup{
+    @DisplayName("Admin ALB Security Group")
+    class AdminAlbSgTest{
         @Test
         @DisplayName("허가된 IP(203.0.113.10/32)만 80 인바운드를 허용한다")
         void shouldAllowInboundFromFirstAllowedCidr() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", 80,
-                                    "ToPort", 80,
-                                    "CidrIp", "203.0.113.10/32"
-                            ))
-                    )))
-            ));
+            assertIngressCidrRule(adminAlbSgLogicalId, 80, allowedIpsList.get(0));
         }
 
         @Test
         @DisplayName("허가된 IP(123.31.100.20/32)만 80 인바운드를 허용한다")
         void shouldAllowInboundFromSecondAllowedCidr() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", 80,
-                                    "ToPort", 80,
-                                    "CidrIp", "123.31.100.20/32"
-                            ))
-                    )))
-            ));
+            assertIngressCidrRule(adminAlbSgLogicalId, 80, allowedIpsList.get(1));
         }
 
         @Test
         @DisplayName("0.0.0.0/0 인바운드가 없다 — 외부 차단 확인 ★")
         void shouldNotAllowPublicInbound() {
             // Admin ALB SG에 anyIpv4 인바운드가 존재하면 안 됨
-            List<Map<String, Object>> resources = template
-                    .findResources("AWS::EC2::SecurityGroup").values().stream()
-                    .filter(r -> {
-                        Object desc = ((Map<?, ?>) ((Map<?, ?>) r).get("Properties"))
-                                .get("GroupDescription");
-                        return desc != null && desc.toString().contains("AdminAlbSg");
-                    })
-                    .map(r -> (Map<String, Object>) ((Map<?, ?>) r).get("Properties"))
-                    .toList();
-
-            resources.forEach(props -> {
-                List<?> ingressRules = (List<?>) props.get("SecurityGroupIngress");
-                if (ingressRules != null) {
-                    ingressRules.forEach(rule -> {
-                        Map<?, ?> ruleMap = (Map<?, ?>) rule;
-                        assertThat(ruleMap.get("CidrIp"))
-                                .as("Admin ALB SG에 0.0.0.0/0 인바운드가 존재하면 안된다")
-                                .isNotEqualTo("0.0.0.0/0");
-                    });
-                }
-            });
+            assertThat(ingressRulesFor(adminAlbSgLogicalId))
+                    .noneSatisfy(props -> assertThat(props.get("CidrIp")).isEqualTo("0.0.0.0/0"));
         }
 
         @Test
         @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
         void shouldAllowOutboundToAdminApi() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupEgress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", ADMIN_SERVER_PORT,
-                                    "ToPort", ADMIN_SERVER_PORT
-                            ))
-                    )))
-            ));
+            assertEgressToSecurityGroup(adminAlbSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
         }
 
         @Test
         @DisplayName("Admin Web 포트로 아웃바운드를 허용한다")
         void shouldAllowOutboundToAdminWeb() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupEgress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", ADMIN_WEB_PORT,
-                                    "ToPort", ADMIN_WEB_PORT
-                            ))
-                    )))
-            ));
+            assertEgressToSecurityGroup(adminAlbSgLogicalId, adminWebSgLogicalId, ADMIN_WEB_PORT);
         }
     }
 
@@ -248,30 +282,13 @@ class NetworkStackTest {
         @Test
         @DisplayName("Admin ALB에서만 adminWebPort 인바운드를 허용한다")
         void shouldAllowInboundFromAdminAlbOnly() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", ADMIN_WEB_PORT,
-                                    "ToPort", ADMIN_WEB_PORT
-                            ))
-                    )))
-            ));
+            assertIngressFromSecurityGroup(adminWebSgLogicalId, adminAlbSgLogicalId, ADMIN_WEB_PORT);
         }
 
         @Test
-        @DisplayName("Admin API 포트로만 아웃바운드를 허용한다")
+        @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
         void shouldAllowOutboundToAdminApiPortOnly() {
-            // adminServerPort로 나감
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupEgress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", ADMIN_SERVER_PORT,
-                                    "ToPort", ADMIN_SERVER_PORT
-                            ))
-                    )))
-            ));
+            assertEgressToSecurityGroup(adminWebSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
         }
     }
 
@@ -281,17 +298,9 @@ class NetworkStackTest {
     class AdminApiSgTest {
 
         @Test
-        @DisplayName("Admin ALB에서만 adminServerPort 인바운드를 허용한다 ★")
+        @DisplayName("Admin Web에서만 adminServerPort 인바운드를 허용한다 ★")
         void shouldAllowInboundFromAdminAlbOnly() {
-            template.hasResourceProperties("AWS::EC2::SecurityGroup", Match.objectLike(
-                    Map.of("SecurityGroupIngress", Match.arrayWith(List.of(
-                            Match.objectLike(Map.of(
-                                    "IpProtocol", "tcp",
-                                    "FromPort", ADMIN_SERVER_PORT,
-                                    "ToPort", ADMIN_SERVER_PORT
-                            ))
-                    )))
-            ));
+            assertIngressFromSecurityGroup(adminApiSgLogicalId, adminWebSgLogicalId, ADMIN_SERVER_PORT);
         }
     }
 
