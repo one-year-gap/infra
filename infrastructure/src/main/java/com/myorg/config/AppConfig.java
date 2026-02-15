@@ -4,19 +4,28 @@ import java.util.Arrays;
 import java.util.List;
 
 public final class AppConfig {
-    public AppConfig(){}
+    /**
+ * Creates a new AppConfig instance.
+ */
+public AppConfig(){}
 
     /**
-     * 가용 영역 반환
-     * @return 가용 영역 string
+     * Retrieve the deployment region from the environment.
+     *
+     * @return the value of the "REGION" environment variable, or null if it is not set.
      */
     public static String getRegion(){
         return System.getenv("REGION");
     }
 
     /**
-     * 허용 IP 리스트 반환
-     * @return 허용 IP List
+     * Parse and return the configured admin CIDR blocks from the environment.
+     *
+     * The environment variable `ADMIN_ALLOWED_CIDRS` is split on commas; each entry is trimmed
+     * and blank entries are omitted.
+     *
+     * @return the list of trimmed, non-empty CIDR strings from `ADMIN_ALLOWED_CIDRS`
+     * @throws NullPointerException if the `ADMIN_ALLOWED_CIDRS` environment variable is not set
      */
     public static List<String> getAdminAllowedCidrs(){
         String ipList = System.getenv("ADMIN_ALLOWED_CIDRS");

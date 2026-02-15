@@ -16,6 +16,21 @@ public class NetworkStack extends Stack {
     private final SecurityGroup customerAlbSg, customerApiSg;
     private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg;
 
+    /**
+     * Creates a NetworkStack that provisions a VPC (public and private subnets) and security groups for
+     * customer-facing and admin-facing application surfaces.
+     *
+     * The stack creates:
+     * - a VPC with 2 AZs, 1 NAT gateway, public and private (with egress) subnets;
+     * - SecurityGroups: Customer ALB, Customer API, Admin ALB, Admin Web, and Admin API;
+     * - ingress and egress rules for the above security groups according to administrator CIDRs and ports
+     *   supplied by the configuration.
+     *
+     * @param scope  the parent Construct
+     * @param id     the stack identifier
+     * @param props  stack properties
+     * @param config configuration providing admin allowed CIDRs and service ports used to configure security group rules
+     */
     public NetworkStack(Construct scope, String id, StackProps props, NetworkStackConfig config) {
         super(scope, id, props);
 
@@ -121,26 +136,56 @@ public class NetworkStack extends Stack {
     }
 
 
+    /**
+     * Returns the VPC provisioned for this stack.
+     *
+     * @return the Vpc instance created and used by this stack
+     */
     public Vpc getVpc() {
         return vpc;
     }
 
+    /**
+     * Exposes the security group used by the customer-facing application load balancer.
+     *
+     * @return the SecurityGroup assigned to the customer ALB
+     */
     public SecurityGroup getCustomerAlbSg() {
         return customerAlbSg;
     }
 
+    /**
+     * Security group for customer API tasks.
+     *
+     * @return the SecurityGroup that allows ingress from the customer ALB on the customer API port and egress to TCP 443 (HTTPS) and TCP 53 (DNS)
+     */
     public SecurityGroup getCustomerApiSg() {
         return customerApiSg;
     }
 
+    /**
+     * Accessor for the security group attached to the administrative Application Load Balancer.
+     *
+     * @return the SecurityGroup used by the admin ALB
+     */
     public SecurityGroup getAdminAlbSg() {
         return adminAlbSg;
     }
 
+    /**
+     * Retrieve the SecurityGroup for the admin web service.
+     *
+     * @return the SecurityGroup that controls ingress and egress for the admin web tier
+     */
     public SecurityGroup getAdminWebSg() {
         return adminWebSg;
     }
 
+    /**
+     * The security group that protects the admin API.
+     *
+     * @return the admin API SecurityGroup used to control ingress from the admin ALB and permitted egress
+     */
     public SecurityGroup getAdminApiSg() {
         return adminApiSg;
     }
