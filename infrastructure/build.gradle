@@ -38,6 +38,8 @@ application {
 test {
     useJUnitPlatform()
     finalizedBy tasks.named("jacocoTestReport")
+    environment "API_SERVER_REPOSITORY", "one-year-gap/api-server"
+    environment "ADMIN_WEB_REPOSITORY", "one-year-gap/admin-web"
 }
 
 jacoco {
