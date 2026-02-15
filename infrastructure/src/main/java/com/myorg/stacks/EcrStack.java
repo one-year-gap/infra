@@ -1,13 +1,14 @@
 package com.myorg.stacks;
 
 import com.myorg.config.RepositoryConfig;
+import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
-import software.amazon.awscdk.services.ecr.Repository;
-import software.amazon.awscdk.services.ecr.RepositoryProps;
-import software.amazon.awscdk.services.ecr.TagMutability;
+import software.amazon.awscdk.services.ecr.*;
 import software.constructs.Construct;
+
+import java.util.List;
 
 public class EcrStack extends Stack {
     private final Repository apiServerRepo;
@@ -24,6 +25,15 @@ public class EcrStack extends Stack {
                         .imageScanOnPush(true)
                         .imageTagMutability(TagMutability.IMMUTABLE)
                         .removalPolicy(RemovalPolicy.RETAIN)
+                        .lifecycleRules(
+                                List.of(
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.UNTAGGED)
+                                                .description("expire untagged images after 7 days")
+                                                .maxImageAge(Duration.days(7))
+                                                .build())
+                        )
                         .build()
         );
 
@@ -35,6 +45,15 @@ public class EcrStack extends Stack {
                         .imageTagMutability(TagMutability.IMMUTABLE)
                         .imageScanOnPush(true)
                         .removalPolicy(RemovalPolicy.RETAIN)
+                        .lifecycleRules(
+                                List.of(
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.UNTAGGED)
+                                                .description("expire untagged images after 7 days")
+                                                .maxImageAge(Duration.days(7))
+                                                .build())
+                        )
                         .build()
         );
     }
