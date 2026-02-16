@@ -40,18 +40,20 @@ jobs:
             const allowedTypes = JSON.parse(process.env.ALLOWED_TYPES_JSON);
             const ticketRe = new RegExp(process.env.TICKET_PATTERN);
 
-            const headRef = pr.head.ref; // ex) feat/HSC-2
+            // PR head branch (ex: feat/HSC-2)
+            const headRef = pr.head.ref;
             const m = headRef.match(/^([a-z]+)\/([A-Z]+-\d+)$/);
             if (!m) {
               core.setFailed(`브랜치명 규칙 위반: "${headRef}" (필수: <type>/<TICKET>, 예: feat/HSC-2)`);
               return;
             }
 
-            const type = m[1];
+            const branchType = m[1];
             const ticket = m[2];
 
-            if (!allowedTypes.includes(type)) {
-              core.setFailed(`브랜치 type 위반: "${type}" (허용: ${allowedTypes.join(", ")})`);
+            // 브랜치 타입은 allowedTypes 안에 있어야 함(브랜치 네이밍 정책 유지)
+            if (!allowedTypes.includes(branchType)) {
+              core.setFailed(`브랜치 type 위반: "${branchType}" (허용: ${allowedTypes.join(", ")})`);
               return;
             }
             if (!ticketRe.test(ticket)) {
@@ -59,8 +61,31 @@ jobs:
               return;
             }
 
-            core.info(`Branch OK: type=${type}, ticket=${ticket}`);
-            const expectedPrefix = `${type}/${ticket}: `;
+            core.info(`Branch OK: branchType=${branchType}, ticket=${ticket}`);
+
+            // ------------------------------
+            // 커밋 메시지 정책: "기존 + 신규" 모두 허용
+            //
+            // [기존] <commitType>/<ticket>: <message>
+            //   예) feat/HSC-2: 로그인 API 추가
+            //
+            // [신규] [<ticket>] <commitType>: <message>
+            //   예) [HSC-2] fix: NPE 수정
+            //
+            // ※ commitType은 allowedTypes 중 아무거나 OK
+            // ※ branchType과 commitType 일치 강제 없음
+            // ------------------------------
+
+            const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const allowedTypeGroup = allowedTypes.map(escapeRe).join("|");
+
+            const oldStyleRe = new RegExp(
+              `^(${allowedTypeGroup})\\/${escapeRe(ticket)}:\\s+.+$`
+            );
+
+            const newStyleRe = new RegExp(
+              `^\\[${escapeRe(ticket)}\\]\\s+(${allowedTypeGroup}):\\s+.+$`
+            );
 
             const commits = await github.paginate(
               github.rest.pulls.listCommits,
@@ -71,22 +96,27 @@ jobs:
             for (const c of commits) {
               const firstLine = (c.commit.message || "").split("\n")[0].trim();
               const isMergeCommitByParents = (c.parents && c.parents.length > 1);
-              const isMergeCommitByMessage = /^Merge\b/i.test(firstLine); 
+              const isMergeCommitByMessage = /^Merge\b/i.test(firstLine);
 
               if (isMergeCommitByParents || isMergeCommitByMessage) {
                 core.info(`Skip merge commit: ${c.sha.slice(0, 7)} ${firstLine}`);
                 continue;
               }
-              
-              if (!firstLine.startsWith(expectedPrefix)) {
-                bad.push({ sha: c.sha.slice(0,7), msg: firstLine });
+
+              const okOld = oldStyleRe.test(firstLine);
+              const okNew = newStyleRe.test(firstLine);
+
+              if (!okOld && !okNew) {
+                bad.push({ sha: c.sha.slice(0, 7), msg: firstLine });
               }
             }
 
             if (bad.length) {
               const lines = bad.map(x => `- ${x.sha}: ${x.msg}`).join("\n");
               core.setFailed(
-                `커밋 메시지 규칙 위반 (필수 접두사: "${expectedPrefix}")\n` +
+                `커밋 메시지 규칙 위반 (아래 둘 중 하나를 만족해야 함)\n` +
+                `1) "<type>/${ticket}: <message>"  (예: feat/${ticket}: 로그인 API 추가)\n` +
+                `2) "[${ticket}] <type>: <message>" (예: [${ticket}] fix: NPE 수정)\n\n` +
                 `아래 커밋들이 규칙을 만족하지 않습니다:\n${lines}\n\n` +
                 `TIP) 로컬에서 husky로 자동 부착하거나, rebase -i로 커밋 메시지를 수정하세요.`
               );
