@@ -69,6 +69,8 @@ class FargateApiServiceTest {
                 dbSecret
         );
 
+        new FargateApiService(props);
+
         Template template = Template.fromStack(stack);
 
         //when
