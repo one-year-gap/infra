@@ -96,7 +96,7 @@ jobs:
               });
             }
 
-      # 2) PR 제목에 [티켓번호] <type>: 자동 추가
+      # 2) PR 제목에 [티켓번호] 자동 추가
       - name: Update PR Title
         if: github.event.action == 'opened' && steps.meta.outputs.jira_key != ''
         uses: actions/github-script@v7
@@ -137,7 +137,7 @@ jobs:
               .replace(/^(feat|fix|hotfix|refactor|style|test|docs|chore|config|deps|build|deploy|release|security|perf|spike|rename|remove|init|task):\s*/i, "")
               .trim();
 
-            const newTitle = `[${JIRA_KEY}] ${commitType}: ${cleanTitle}`;
+            const newTitle = `[${JIRA_KEY}] ${cleanTitle}`;
 
             await github.rest.pulls.update({
               owner: context.repo.owner,
