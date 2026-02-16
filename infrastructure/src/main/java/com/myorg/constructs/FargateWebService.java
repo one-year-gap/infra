@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.props.FargateWebServiceProps;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
@@ -52,24 +53,9 @@ public class FargateWebService extends Construct {
 
 
     public FargateWebService(
-            Construct scope,
-            String id,
-
-            Cluster cluster,
-            Repository repository,
-            String imageTag,//Repo에서 어떤 태그 이미지를 가져올지
-
-            SecurityGroup serviceSg,
-            int containerPort,
-
-            LogGroup logGroup,//CloudWatch Logs로 보내기 위한 LogGroup
-            String logStreamPrefix,//서비스별 구분용 prefix
-
-            SubnetSelection subnets,
-            int desiredCount, //유지할 Task 개수
-            boolean enableEcsExec//AWS ECS exectute-command 사용 여부
+            FargateWebServiceProps props
     ) {
-        super(scope, id);
+        super(props.scope(), props.id());
 
         /**
          * 1) TaskDefinition을 생성함.
@@ -81,7 +67,7 @@ public class FargateWebService extends Construct {
                 //ECS 시작 시 필요 권한 - ECR에서 이미지 pull->CloudWath Logs로 로그 스트림 전송
                 .executionRole(createExecutionRole(EXECUTION_ROLE))
                 //컨테이너 안 service가 AWS API 호출 권한
-                .taskRole(enableEcsExec ? createTaskRoleWithExec(TASK_ROLE) : createBasicTaskRole(TASK_ROLE))
+                .taskRole(props.enableEcsExec() ? createTaskRoleWithExec(TASK_ROLE) : createBasicTaskRole(TASK_ROLE))
                 .build();
 
         /**
@@ -90,14 +76,14 @@ public class FargateWebService extends Construct {
         this.containerDefinition = taskDefinition.addContainer(CONTAINER_ID,
                 ContainerDefinitionOptions.builder()
                         //image: ECR 레포에서 imageTag를 가져와 container 실행
-                        .image(ContainerImage.fromEcrRepository(repository, imageTag))
+                        .image(ContainerImage.fromEcrRepository(props.repository(), props.imageTag()))
                         //logging: CloudWatch Logs로 컨테이너 stdout/stderr 전송
                         .logging(LogDrivers.awsLogs(AwsLogDriverProps.builder()
-                                .logGroup(logGroup)
-                                .streamPrefix(logStreamPrefix)
+                                .logGroup(props.logGroup())
+                                .streamPrefix(props.logStreamPrefix())
                                 .build()))
                         .environment(Map.of(
-                                PORT, String.valueOf(containerPort)
+                                PORT, String.valueOf(props.containerPort())
                         ))
                         .build()
         );
@@ -107,7 +93,7 @@ public class FargateWebService extends Construct {
          */
         containerDefinition.addPortMappings(PortMapping.builder()
                 //컨테이너가 containerPort에서 리스닝하는 것을 ECS에 알려줌
-                .containerPort(containerPort)
+                .containerPort(props.containerPort())
                 .protocol(Protocol.TCP)
                 .build());
 
@@ -115,19 +101,19 @@ public class FargateWebService extends Construct {
          * 4) FargateService 실행
          */
         this.service = FargateService.Builder.create(this, SERVICE_ID)
-                .cluster(cluster)
+                .cluster(props.cluster())
                 //health check 추가 - 60s
                 .healthCheckGracePeriod(Duration.seconds(60))
                 .taskDefinition(taskDefinition)
                 //securityGroup: Task ENI에 적용할 Security Group
-                .securityGroups(List.of(serviceSg))
+                .securityGroups(List.of(props.serviceSg()))
                 //vpcSubnets: Task가 배치되는 subnet
-                .vpcSubnets(subnets)
+                .vpcSubnets(props.subnets())
                 //assignPublicIp: public IP 없이 private에서 동작
                 .assignPublicIp(false)
                 //desiredCount: service가 항상 떠 있는 개수
-                .desiredCount(desiredCount)
-                .enableExecuteCommand(enableEcsExec)
+                .desiredCount(props.desiredCount())
+                .enableExecuteCommand(props.enableEcsExec())
                 .build();
     }
 

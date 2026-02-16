@@ -2,6 +2,8 @@ package com.myorg.stacks;
 
 import com.myorg.constructs.FargateApiService;
 import com.myorg.constructs.FargateWebService;
+import com.myorg.props.FargateApiServiceProps;
+import com.myorg.props.FargateWebServiceProps;
 import software.amazon.awscdk.RemovalPolicy;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
@@ -81,7 +83,6 @@ public class EcsClusterStack extends Stack {
             String apiImageTag
     ) {
         super(scope, id, props);
-
         /**
          * 1) 공통 Subnet
          */
@@ -95,7 +96,7 @@ public class EcsClusterStack extends Stack {
         this.ecsLogGroup = LogGroup.Builder.create(this, LOG_GROUP_ID)
                 .logGroupName("/holliverse/ecs")
                 .retention(RetentionDays.ONE_WEEK)
-                .removalPolicy(RemovalPolicy.DESTROY)
+                .removalPolicy(RemovalPolicy.RETAIN)
                 .build();
 
         /**
@@ -117,9 +118,9 @@ public class EcsClusterStack extends Stack {
         );
 
         /**
-         * 5) Admin Web - Next.js
+         * Props Setup
          */
-        this.adminWebService = new FargateWebService(
+        FargateWebServiceProps adminWebServiceProps = new FargateWebServiceProps(
                 this,
                 ADMIN_WEB_ID,
                 cluster,
@@ -133,11 +134,7 @@ public class EcsClusterStack extends Stack {
                 DESIRED_COUNT,
                 false
         );
-
-        /**
-         * 6) Admin API - Spring boot
-         */
-        this.adminApiService = new FargateApiService(
+        FargateApiServiceProps adminApiServiceProps = new FargateApiServiceProps(
                 this,
                 ADMIN_API_ID,
                 cluster,
@@ -155,10 +152,7 @@ public class EcsClusterStack extends Stack {
                 dbSecret
         );
 
-        /**
-         * 7) customer API - Springboot
-         */
-        this.customerApiService = new FargateApiService(
+        FargateApiServiceProps customerApiServiceProps = new FargateApiServiceProps(
                 this,
                 CUSTOMER_API_ID,
                 cluster,
@@ -175,6 +169,21 @@ public class EcsClusterStack extends Stack {
                 dbUrl,
                 dbSecret
         );
+
+        /**
+         * 5) Admin Web - Next.js
+         */
+        this.adminWebService = new FargateWebService(adminWebServiceProps);
+
+        /**
+         * 6) Admin API - Spring boot
+         */
+        this.adminApiService = new FargateApiService(adminApiServiceProps);
+
+        /**
+         * 7) customer API - Springboot
+         */
+        this.customerApiService = new FargateApiService(customerApiServiceProps);
     }
 
     public Cluster getCluster() {

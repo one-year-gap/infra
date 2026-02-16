@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.props.FargateApiServiceProps;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import software.amazon.awscdk.App;
@@ -50,8 +51,7 @@ class FargateApiServiceTest {
                         .generateStringKey("password")
                         .build())
                 .build();
-
-        new FargateApiService(
+        FargateApiServiceProps props = new FargateApiServiceProps(
                 stack,
                 "TestApiService",
                 cluster,

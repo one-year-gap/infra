@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.props.FargateWebServiceProps;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import software.amazon.awscdk.App;
@@ -41,7 +42,7 @@ class FargateWebServiceTest {
         LogGroup logGroup = LogGroup.Builder.create(stack, "TestLogGroup")
                 .build();
 
-        new FargateWebService(
+        FargateWebServiceProps props = new FargateWebServiceProps(
                 stack,
                 "TestWebService",
                 cluster,
@@ -55,6 +56,8 @@ class FargateWebServiceTest {
                 1,
                 false
         );
+
+        new FargateWebService(props);
 
         Template template = Template.fromStack(stack);
 

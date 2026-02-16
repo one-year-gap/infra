@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.props.FargateApiServiceProps;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
@@ -15,6 +16,7 @@ import software.constructs.Construct;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * FargateService - API Service (Customer/Admin 공용)
@@ -67,28 +69,9 @@ public class FargateApiService extends Construct {
 
 
     public FargateApiService(
-            Construct scope,
-            String id,
-
-            Cluster cluster,
-            Repository repository,
-            String imageTag,
-
-            SecurityGroup serviceSg, //서비스 ENI에 붙는 SG
-            int containerPort,
-
-            LogGroup logGroup,//CloudWatch Logs 그룹
-            String logStreamPrefix,//service별 로그 스트림
-
-            SubnetSelection subnets,//Task 배치 subnet
-            int desiredCount,
-            boolean enableEcsExec,
-
-            String springProfile,//spring profile = customer,admin
-            String jdbcUrl,
-            Secret dbSecret
+            FargateApiServiceProps props
     ) {
-        super(scope, id);
+        super(props.scope(), props.id());
 
         /**
          * 1) TaskDefinition 생성
@@ -97,32 +80,32 @@ public class FargateApiService extends Construct {
                 .cpu(SERVER_CPU)
                 .memoryLimitMiB(SERVER_MEMORY)
                 .executionRole(createExecutionRole(EXECUTION_ROLE))
-                .taskRole(enableEcsExec ? createTaskRoleWithExec(TASK_ROLE) : createBasicTaskRole(TASK_ROLE))
+                .taskRole(props.enableEcsExec() ? createTaskRoleWithExec(TASK_ROLE) : createBasicTaskRole(TASK_ROLE))
                 .build();
 
         //secret 주입 - executionRole에 read 권한 부여
-        dbSecret.grantRead(taskDefinition.getExecutionRole());
+        props.dbSecret().grantRead(Objects.requireNonNull(taskDefinition.getExecutionRole()));
 
         /**
          * 2) Container 추가
          */
         this.containerDefinition = taskDefinition.addContainer(CONTAINER_ID,
                 ContainerDefinitionOptions.builder()
-                        .image(ContainerImage.fromEcrRepository(repository, imageTag))
+                        .image(ContainerImage.fromEcrRepository(props.repository(), props.imageTag()))
                         .logging(LogDriver.awsLogs(AwsLogDriverProps.builder()
-                                .logGroup(logGroup)
-                                .streamPrefix(logStreamPrefix)
+                                .logGroup(props.logGroup())
+                                .streamPrefix(props.logStreamPrefix())
                                 .build()))
                         .environment(Map.of(
-                                SPRING_PROFILES_ACTIVE, springProfile,
-                                SPRING_DATASOURCE_URL, jdbcUrl,
-                                SERVER_PORT, String.valueOf(containerPort)
+                                SPRING_PROFILES_ACTIVE, props.springProfile(),
+                                SPRING_DATASOURCE_URL, props.jdbcUrl(),
+                                SERVER_PORT, String.valueOf(props.containerPort())
                         ))
                         .secrets(Map.of(
                                 //Secret Manager JSON key("username")
-                                SPRING_DATASOURCE_USERNAME, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(dbSecret, "username"),
+                                SPRING_DATASOURCE_USERNAME, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "username"),
                                 //Secret Manage JSON key("password")
-                                SPRING_DATASOURCE_PASSWORD, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(dbSecret, "password")
+                                SPRING_DATASOURCE_PASSWORD, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "password")
                         ))
                         .build()
         );
@@ -131,7 +114,7 @@ public class FargateApiService extends Construct {
          * 3) Port Mapping
          */
         containerDefinition.addPortMappings(PortMapping.builder()
-                .containerPort(containerPort)
+                .containerPort(props.containerPort())
                 .protocol(Protocol.TCP)
                 .build()
         );
@@ -141,15 +124,15 @@ public class FargateApiService extends Construct {
          * 3) FargateService
          */
         this.service = FargateService.Builder.create(this, SERVICE_ID)
-                .cluster(cluster)
+                .cluster(props.cluster())
                 .taskDefinition(taskDefinition)
-                .securityGroups(List.of(serviceSg))
-                .vpcSubnets(subnets)
+                .securityGroups(List.of(props.serviceSg()))
+                .vpcSubnets(props.subnets())
                 .assignPublicIp(false)
                 //health check 추가 - 180s
                 .healthCheckGracePeriod(Duration.seconds(180))
-                .desiredCount(desiredCount)
-                .enableExecuteCommand(enableEcsExec)
+                .desiredCount(props.desiredCount())
+                .enableExecuteCommand(props.enableEcsExec())
                 .build();
     }
     /**
