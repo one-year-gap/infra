@@ -149,24 +149,24 @@ public class NetworkStack extends Stack {
                 "To Admin Web ECS only"
         );
 
-        //ALB->Admin API Server only
-        adminAlbSg.addEgressRule(
-                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
-                Port.tcp(adminServerPort),
-                "To Admin API ECS only"
-        );
-
         //Admin Web -> Admin ALB
         adminWebSg.addEgressRule(Peer.securityGroupId(
                         adminApiSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort), "To Admin API only"
         );
 
-        //Admin ALB -> Admin API
+        //Admin Web -> Admin API
         adminApiSg.addIngressRule(
                 Peer.securityGroupId(adminWebSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort),
                 "From Admin Web only (direct)"
+        );
+
+        //Admin ALB -> Admin API
+        adminApiSg.addIngressRule(
+                Peer.securityGroupId(adminAlbSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "From Admin ALB (direct)"
         );
 
 

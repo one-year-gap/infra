@@ -262,12 +262,6 @@ class NetworkStackTest {
         }
 
         @Test
-        @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
-        void shouldAllowOutboundToAdminApi() {
-            assertEgressToSecurityGroup(adminAlbSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
-        }
-
-        @Test
         @DisplayName("Admin Web 포트로 아웃바운드를 허용한다")
         void shouldAllowOutboundToAdminWeb() {
             assertEgressToSecurityGroup(adminAlbSgLogicalId, adminWebSgLogicalId, ADMIN_WEB_PORT);
