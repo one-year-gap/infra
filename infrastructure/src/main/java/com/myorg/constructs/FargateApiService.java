@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ecr.Repository;
@@ -145,6 +146,8 @@ public class FargateApiService extends Construct {
                 .securityGroups(List.of(serviceSg))
                 .vpcSubnets(subnets)
                 .assignPublicIp(false)
+                //health check 추가 - 180s
+                .healthCheckGracePeriod(Duration.seconds(180))
                 .desiredCount(desiredCount)
                 .enableExecuteCommand(enableEcsExec)
                 .build();

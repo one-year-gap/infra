@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ecr.Repository;
@@ -115,6 +116,8 @@ public class FargateWebService extends Construct {
          */
         this.service = FargateService.Builder.create(this, SERVICE_ID)
                 .cluster(cluster)
+                //health check 추가 - 60s
+                .healthCheckGracePeriod(Duration.seconds(60))
                 .taskDefinition(taskDefinition)
                 //securityGroup: Task ENI에 적용할 Security Group
                 .securityGroups(List.of(serviceSg))
