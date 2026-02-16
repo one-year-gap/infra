@@ -55,6 +55,9 @@ def jacocoExcludes = [
         '**/config/**',
         '**/*Config*',
         '**/*Configuration*',
+
+        //Props
+        '**/props/**'
 ]
 
 tasks.named("jacocoTestReport", JacocoReport) {
