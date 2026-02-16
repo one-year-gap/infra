@@ -27,7 +27,6 @@ public class RdsStack extends Stack {
                 .generateSecretString(SecretStringGenerator.builder()
                         .secretStringTemplate("{\"username\":\"holliverse\"}")
                         .generateStringKey("password")
-                        .excludePunctuation(true)
                         .includeSpace(false)
                         .build())
                 .build();
@@ -66,9 +65,9 @@ public class RdsStack extends Stack {
                 .multiAz(false) //고가용성 사용 X
                 .publiclyAccessible(false) //외부 접근 X
                 .backupRetention(Duration.days(1))//backup 기준 1일
-                .deletionProtection(false)
-                .deleteAutomatedBackups(true)//자동백업 제거
-                .removalPolicy(RemovalPolicy.DESTROY)
+                .deletionProtection(true)
+                .deleteAutomatedBackups(false)
+                .removalPolicy(RemovalPolicy.RETAIN)
                 .build();
     }
 
