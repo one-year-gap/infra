@@ -8,6 +8,7 @@ import java.util.List;
 public final class AppConfig {
     private AppConfig() {
     }
+
     private static final Dotenv DOTENV = Dotenv.configure().ignoreIfMissing().load();
 
     /**
@@ -25,11 +26,10 @@ public final class AppConfig {
      * @return 허용 IP List
      */
     public static List<String> getAdminAllowedCidrs() {
-        String ipList = getValue("ADMIN_ALLOWED_CIDRS");
-        ipList =  DOTENV.get(ipList);
+        String ipList = System.getenv("ADMIN_ALLOWED_CIDRS");
 
         if (ipList == null || ipList.isBlank()) {
-            return List.of();
+            ipList = DOTENV.get("ADMIN_ALLOWED_CIDRS");
         }
 
         return Arrays.stream(ipList.split(","))
@@ -55,9 +55,9 @@ public final class AppConfig {
         if (v != null && !v.isBlank()) return v.trim();
         v = DOTENV.get(key);
 
-        if (v==null || v.isBlank()){
-            throw new IllegalStateException(key+"에 해당하는 환경변수가 존재하지 않습니다.");
+        if (v == null || v.isBlank()) {
+            throw new IllegalStateException(key + "에 해당하는 환경변수가 존재하지 않습니다.");
         }
-        return  v.trim();
+        return v.trim();
     }
 }
