@@ -140,7 +140,7 @@ class AlbStackTest {
                 "Port", 3001,
                 "Protocol", ApplicationProtocol.HTTP.toString(),
                 "HealthCheckPath", "/health",
-                "Matcher", Map.of("HttpCode", "200-399")
+                "Matcher", Map.of("HttpCode", "200")
         ));
     }
 
