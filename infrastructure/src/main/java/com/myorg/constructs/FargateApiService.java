@@ -45,7 +45,7 @@ public class FargateApiService extends Construct {
     private static final String EXECUTION_ROLE = "ExecRole";
     private static final String TASK_DEFINITION = "TaskDef";
     private static final String TASK_ROLE = "TaskRole";
-    private static final String CONTAINER_ID = "Container";
+    private static final String CONTAINER_ID = "ApiContainer";
     private static final String SERVICE_ID = "Service";
 
     /**
