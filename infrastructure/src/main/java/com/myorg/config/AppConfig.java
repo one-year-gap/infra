@@ -56,6 +56,6 @@ public final class AppConfig {
         if (v==null || v.isBlank()){
             throw new IllegalStateException(key+"에 해당하는 환경변수가 존재하지 않습니다.");
         }
-        return (v == null || v.isBlank()) ? null : v.trim();
+        return  v.trim();
     }
 }
