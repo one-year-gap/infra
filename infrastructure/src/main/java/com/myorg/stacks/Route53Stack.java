@@ -25,7 +25,7 @@ public class Route53Stack extends Stack {
                 ARecordProps.builder()
                         .zone(zone)
                         .recordName("")
-                        .target(RecordTarget.fromIpAddresses(AppConfig.getVervelIp()))
+                        .target(RecordTarget.fromIpAddresses(AppConfig.getVercelIp()))
                         .build());
 
         CfnOutput.Builder.create(this,"HostedZoneNameServers")
