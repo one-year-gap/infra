@@ -6,7 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 
 public final class AppConfig {
-    public AppConfig() {
+    private AppConfig() {
     }
     private static final Dotenv DOTENV = Dotenv.configure().ignoreIfMissing().load();
 
@@ -26,6 +26,8 @@ public final class AppConfig {
      */
     public static List<String> getAdminAllowedCidrs() {
         String ipList = getValue("ADMIN_ALLOWED_CIDRS");
+        ipList =  DOTENV.get(ipList);
+
         if (ipList == null || ipList.isBlank()) {
             return List.of();
         }
