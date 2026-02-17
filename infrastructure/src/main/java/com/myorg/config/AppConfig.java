@@ -36,13 +36,12 @@ public final class AppConfig {
                 .toList();
     }
 
-    public static String getVervelIp() {
+    public static String getVercelIp() {
         return getValue("VERCEL_APEX_IP");
     }
 
     /**
      * Route53 도메인 이름 반환
-     * 우선순위: DOMAIN_NAME -> ROUTE53_DOMAIN_NAME -> ROOT_DOMAIN -> domainName
      */
     public static String getDomainName() {
         return getValue("DOMAIN_NAME");
@@ -54,6 +53,9 @@ public final class AppConfig {
         if (v != null && !v.isBlank()) return v.trim();
         v = DOTENV.get(key);
 
+        if (v==null || v.isBlank()){
+            throw new IllegalStateException(key+"에 해당하는 환경변수가 존재하지 않습니다.");
+        }
         return (v == null || v.isBlank()) ? null : v.trim();
     }
 }
