@@ -39,11 +39,11 @@ public class AlbStack extends Stack {
     private final static String ADMIN_HTTPS_LISTENER = "AdminHttps";
 
     public AlbStack(
-            ApplicationLoadBalancerProps loadBalancerProps,
             final Construct scope,
             final String id,
-            final StackProps props
-    ) {
+            final StackProps props,
+            ApplicationLoadBalancerProps loadBalancerProps
+            ) {
         super(scope, id, props);
 
         SubnetSelection publicSubnets = SubnetSelection.builder()
@@ -59,6 +59,7 @@ public class AlbStack extends Stack {
                 .vpc(loadBalancerProps.vpc())
                 .internetFacing(true)//인터넷 접근 가능한 public ALB - 공개 subnet 배치
                 .securityGroup(loadBalancerProps.customerAlbSg())
+                .deletionProtection(true)
                 .vpcSubnets(publicSubnets)//ALB ENI를 어떤 subnet에 두는가
                 .build();
 
@@ -121,6 +122,7 @@ public class AlbStack extends Stack {
                 .vpc(loadBalancerProps.vpc())
                 .internetFacing(true)
                 .securityGroup(loadBalancerProps.adminAlbSg())
+                .deletionProtection(true)
                 .vpcSubnets(publicSubnets)
                 .build();
 
@@ -159,7 +161,7 @@ public class AlbStack extends Stack {
                 ))
                 .healthCheck(HealthCheck.builder()
                         .path(ADMIN_HEALTH_CHECK)
-                        .healthyHttpCodes("200-399")
+                        .healthyHttpCodes("200")
                         .interval(Duration.seconds(30))
                         .timeout(Duration.seconds(5))
                         .healthyThresholdCount(2)

@@ -82,10 +82,10 @@ class AlbStackTest {
         );
 
         AlbStack albStack = new AlbStack(
-                props,
                 app,
                 "AlbStackTest",
-                StackProps.builder().build()
+                StackProps.builder().build(),
+                props
         );
 
         template = Template.fromStack(albStack);
