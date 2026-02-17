@@ -1,5 +1,6 @@
 package com.myorg.stacks;
 
+import com.myorg.config.ContainerConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.Stack;
@@ -16,8 +17,6 @@ public class AlbStack extends Stack {
     private final ApplicationLoadBalancer customerAlb;
     private final ApplicationLoadBalancer adminAlb;
 
-    private final static String API_CONTAINER_NAME = "ApiContainer";
-    private final static String WEB_CONTAINER_NAME = "WebContainer";
     /**
      * Customer
      */
@@ -99,7 +98,7 @@ public class AlbStack extends Stack {
                 .port(loadBalancerProps.customerApiPort())
                 .targets(List.of(
                         loadBalancerProps.customerApiService().loadBalancerTarget(LoadBalancerTargetOptions.builder()
-                                .containerName(API_CONTAINER_NAME)
+                                .containerName(ContainerConfig.API_CONTAINER_NAME)
                                 .containerPort(loadBalancerProps.customerApiPort())
                                 .build())
                 ))
@@ -154,7 +153,7 @@ public class AlbStack extends Stack {
                 .port(loadBalancerProps.adminWebPort())//ALB -> Container 전달 포트
                 .targets(List.of(
                         loadBalancerProps.adminWebService().loadBalancerTarget(LoadBalancerTargetOptions.builder()
-                                .containerName(WEB_CONTAINER_NAME)
+                                .containerName(ContainerConfig.WEB_CONTAINER_NAME)
                                 .containerPort(loadBalancerProps.adminWebPort())
                                 .build())
                 ))

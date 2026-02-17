@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.config.ContainerConfig;
 import com.myorg.props.FargateApiServiceProps;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
@@ -45,7 +46,7 @@ public class FargateApiService extends Construct {
     private static final String EXECUTION_ROLE = "ExecRole";
     private static final String TASK_DEFINITION = "TaskDef";
     private static final String TASK_ROLE = "TaskRole";
-    private static final String CONTAINER_ID = "ApiContainer";
+    private static final String CONTAINER_ID = ContainerConfig.API_CONTAINER_NAME;
     private static final String SERVICE_ID = "Service";
 
     /**
