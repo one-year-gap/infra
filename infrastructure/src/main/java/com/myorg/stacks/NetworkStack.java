@@ -117,6 +117,7 @@ public class NetworkStack extends Stack {
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS out");
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        customerApiSg.addEgressRule(Peer.ipv4(vpc.getVpcCidrBlock()), Port.tcp(5432), "Postgres inside VPC");
 
 
         /*
@@ -162,17 +163,11 @@ public class NetworkStack extends Stack {
                 "From Admin Web only (direct)"
         );
 
-        //Admin ALB -> Admin API
-        adminApiSg.addIngressRule(
-                Peer.securityGroupId(adminAlbSg.getSecurityGroupId()),
-                Port.tcp(adminServerPort),
-                "From Admin ALB (direct)"
-        );
-
 
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS");
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        adminApiSg.addEgressRule(Peer.ipv4(vpc.getVpcCidrBlock()), Port.tcp(5432), "Postgres inside VPC");
     }
 
 
