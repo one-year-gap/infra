@@ -52,6 +52,7 @@ public class EcsClusterStack extends Stack {
     private static final String PROFILE_ADMIN = "admin";
     private static final String PROFILE_CUSTOMER = "customer";
     private static final String DOMAIN_NAME_SPACE = "ServiceNs";
+    private static final String ADMIN_CLOUD_MAP_NAME="admin-api";
 
     /**
      * DB 상수
@@ -159,7 +160,7 @@ public class EcsClusterStack extends Stack {
                 dbUrl,
                 dbSecret,
                 serviceNs,
-                "admin-api"
+                ADMIN_CLOUD_MAP_NAME
         );
 
         FargateApiServiceProps customerApiServiceProps = new FargateApiServiceProps(
