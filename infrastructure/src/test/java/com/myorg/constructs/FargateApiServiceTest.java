@@ -15,6 +15,7 @@ import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.amazon.awscdk.services.secretsmanager.SecretStringGenerator;
+import software.amazon.awscdk.services.servicediscovery.PrivateDnsNamespace;
 
 import java.util.Map;
 
@@ -66,7 +67,9 @@ class FargateApiServiceTest {
                 true,
                 "admin",
                 "jdbc:postgresql://example.com:5432/holliverse",
-                dbSecret
+                dbSecret,
+                null,
+                null
         );
 
         new FargateApiService(props);
@@ -93,6 +96,69 @@ class FargateApiServiceTest {
         ));
         template.hasResourceProperties("AWS::SecretsManager::Secret", Map.of(
                 "Name", "test/db/secret"
+        ));
+    }
+
+    @Test
+    @DisplayName("Cloud Map 설정이 있으면 Service Discovery가 등록되어야 한다.")
+    void should_register_cloud_map_when_namespace_and_service_name_are_provided() {
+        //given
+        App app = new App();
+        Stack stack = new Stack(app, "FargateApiServiceCloudMapTestStack");
+
+        Vpc vpc = Vpc.Builder.create(stack, "CloudMapVpc")
+                .maxAzs(2)
+                .build();
+        Cluster cluster = Cluster.Builder.create(stack, "CloudMapCluster")
+                .vpc(vpc)
+                .build();
+        SecurityGroup serviceSg = SecurityGroup.Builder.create(stack, "CloudMapApiServiceSg")
+                .vpc(vpc)
+                .build();
+        Repository repository = Repository.Builder.create(stack, "CloudMapApiRepo")
+                .repositoryName("test-api-server-cloudmap")
+                .build();
+        LogGroup logGroup = LogGroup.Builder.create(stack, "CloudMapLogGroup")
+                .build();
+        Secret dbSecret = Secret.Builder.create(stack, "CloudMapDbSecret")
+                .secretName("test/cloudmap/db/secret")
+                .generateSecretString(SecretStringGenerator.builder()
+                        .secretStringTemplate("{\"username\":\"holliverse\"}")
+                        .generateStringKey("password")
+                        .build())
+                .build();
+        PrivateDnsNamespace ns = PrivateDnsNamespace.Builder.create(stack, "CloudMapNs")
+                .vpc(vpc)
+                .name("example.internal")
+                .build();
+
+        FargateApiServiceProps props = new FargateApiServiceProps(
+                stack,
+                "CloudMapApiService",
+                cluster,
+                repository,
+                "latest",
+                serviceSg,
+                8080,
+                logGroup,
+                "cloudmap-api",
+                SubnetSelection.builder().subnetType(SubnetType.PRIVATE_WITH_EGRESS).build(),
+                1,
+                true,
+                "admin",
+                "jdbc:postgresql://example.com:5432/holliverse",
+                dbSecret,
+                ns,
+                "admin-api"
+        );
+
+        new FargateApiService(props);
+        Template template = Template.fromStack(stack);
+
+        //then
+        template.resourceCountIs("AWS::ServiceDiscovery::Service", 1);
+        template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
+                "Name", "admin-api"
         ));
     }
 }

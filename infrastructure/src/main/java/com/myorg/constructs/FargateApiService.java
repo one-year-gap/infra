@@ -1,5 +1,6 @@
 package com.myorg.constructs;
 
+import com.myorg.config.ContainerConfig;
 import com.myorg.props.FargateApiServiceProps;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
@@ -45,7 +46,7 @@ public class FargateApiService extends Construct {
     private static final String EXECUTION_ROLE = "ExecRole";
     private static final String TASK_DEFINITION = "TaskDef";
     private static final String TASK_ROLE = "TaskRole";
-    private static final String CONTAINER_ID = "Container";
+    private static final String CONTAINER_ID = ContainerConfig.API_CONTAINER_NAME;
     private static final String SERVICE_ID = "Service";
 
     /**
@@ -123,7 +124,8 @@ public class FargateApiService extends Construct {
         /**
          * 3) FargateService
          */
-        this.service = FargateService.Builder.create(this, SERVICE_ID)
+
+        FargateService.Builder serviceBuilder = FargateService.Builder.create(this, SERVICE_ID)
                 .cluster(props.cluster())
                 .taskDefinition(taskDefinition)
                 .securityGroups(List.of(props.serviceSg()))
@@ -132,9 +134,21 @@ public class FargateApiService extends Construct {
                 //health check 추가 - 180s
                 .healthCheckGracePeriod(Duration.seconds(180))
                 .desiredCount(props.desiredCount())
-                .enableExecuteCommand(props.enableEcsExec())
-                .build();
+                .enableExecuteCommand(props.enableEcsExec());
+
+        //Cloud Map 설정이 있으면
+        if (props.cloudMapNamespace() != null
+            && props.cloudMapServiceName() != null
+            && !props.cloudMapServiceName().isBlank()){
+            serviceBuilder.cloudMapOptions(CloudMapOptions.builder()
+                    .cloudMapNamespace(props.cloudMapNamespace())
+                    .name(props.cloudMapServiceName())
+                    .build());
+        }
+
+        this.service = serviceBuilder.build();
     }
+
     /**
      * Execution Role: ECS/Fargate 런타임이 Task 시작 시 필요 권한
      */
@@ -178,13 +192,15 @@ public class FargateApiService extends Construct {
     /**
      * getter
      */
-    public FargateTaskDefinition getTaskDefinition(){
+    public FargateTaskDefinition getTaskDefinition() {
         return taskDefinition;
     }
-    public FargateService getService(){
+
+    public FargateService getService() {
         return service;
     }
-    public ContainerDefinition getContainerDefinition(){
+
+    public ContainerDefinition getContainerDefinition() {
         return containerDefinition;
     }
 }

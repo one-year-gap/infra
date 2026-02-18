@@ -1,5 +1,6 @@
 package com.myorg.stacks;
 
+import com.myorg.config.AppConfig;
 import com.myorg.constructs.FargateApiService;
 import com.myorg.constructs.FargateWebService;
 import com.myorg.props.FargateApiServiceProps;
@@ -13,11 +14,11 @@ import software.amazon.awscdk.services.ec2.SubnetType;
 import software.amazon.awscdk.services.ec2.Vpc;
 import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.ecs.Cluster;
-import software.amazon.awscdk.services.ecs.FargateService;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.rds.DatabaseInstance;
 import software.amazon.awscdk.services.secretsmanager.Secret;
+import software.amazon.awscdk.services.servicediscovery.PrivateDnsNamespace;
 import software.constructs.Construct;
 
 public class EcsClusterStack extends Stack {
@@ -50,6 +51,8 @@ public class EcsClusterStack extends Stack {
     private static final int DESIRED_COUNT = 1;
     private static final String PROFILE_ADMIN = "admin";
     private static final String PROFILE_CUSTOMER = "customer";
+    private static final String DOMAIN_NAME_SPACE = "ServiceNs";
+    private static final String ADMIN_CLOUD_MAP_NAME="admin-api";
 
     /**
      * DB 상수
@@ -80,7 +83,8 @@ public class EcsClusterStack extends Stack {
             int adminApiPort,
             int customerApiPort,
             String adminWebImageTag,
-            String apiImageTag
+            String adminApiImageTag,
+            String customerApiImageTag
     ) {
         super(scope, id, props);
         /**
@@ -88,6 +92,11 @@ public class EcsClusterStack extends Stack {
          */
         SubnetSelection privateSubnets = SubnetSelection.builder()
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
+                .build();
+
+        PrivateDnsNamespace serviceNs = PrivateDnsNamespace.Builder.create(this, DOMAIN_NAME_SPACE)
+                .vpc(vpc)
+                .name(AppConfig.getInternalDomainName())
                 .build();
 
         /**
@@ -139,7 +148,7 @@ public class EcsClusterStack extends Stack {
                 ADMIN_API_ID,
                 cluster,
                 apiServerRepo,
-                apiImageTag,
+                adminApiImageTag,
                 adminApiSg,
                 adminApiPort,
                 ecsLogGroup,
@@ -149,7 +158,9 @@ public class EcsClusterStack extends Stack {
                 true,
                 PROFILE_ADMIN,
                 dbUrl,
-                dbSecret
+                dbSecret,
+                serviceNs,
+                ADMIN_CLOUD_MAP_NAME
         );
 
         FargateApiServiceProps customerApiServiceProps = new FargateApiServiceProps(
@@ -157,7 +168,7 @@ public class EcsClusterStack extends Stack {
                 CUSTOMER_API_ID,
                 cluster,
                 apiServerRepo,
-                apiImageTag,
+                customerApiImageTag,
                 customerApiSg,
                 customerApiPort,
                 ecsLogGroup,
@@ -167,7 +178,9 @@ public class EcsClusterStack extends Stack {
                 true,
                 PROFILE_CUSTOMER,
                 dbUrl,
-                dbSecret
+                dbSecret,
+                null,
+                null
         );
 
         /**
@@ -202,7 +215,7 @@ public class EcsClusterStack extends Stack {
         return customerApiService;
     }
 
-    public FargateApiService getAdminApiService(){
+    public FargateApiService getAdminApiService() {
         return adminApiService;
     }
 

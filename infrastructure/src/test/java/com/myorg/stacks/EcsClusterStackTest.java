@@ -90,7 +90,8 @@ class EcsClusterStackTest {
                 8080,
                 8080,
                 "latest",
-                "latest"
+                "admin-latest",
+                "customer-latest"
         );
         Template template = Template.fromStack(ecsClusterStack);
 
@@ -99,12 +100,16 @@ class EcsClusterStackTest {
         Map<String, Map<String, Object>> logGroups = template.findResources("AWS::Logs::LogGroup");
         Map<String, Map<String, Object>> taskDefinitions = template.findResources("AWS::ECS::TaskDefinition");
         Map<String, Map<String, Object>> services = template.findResources("AWS::ECS::Service");
+        Map<String, Map<String, Object>> namespaces = template.findResources("AWS::ServiceDiscovery::PrivateDnsNamespace");
+        Map<String, Map<String, Object>> sdServices = template.findResources("AWS::ServiceDiscovery::Service");
 
         //then
         assertEquals(1, clusters.size());
         assertEquals(1, logGroups.size());
         assertEquals(3, taskDefinitions.size());
         assertEquals(3, services.size());
+        assertEquals(1, namespaces.size());
+        assertEquals(1, sdServices.size());
 
         assertEquals(2, countServicesByExecOption(services, true));
         assertEquals(1, countServicesByExecOption(services, false));
@@ -114,6 +119,12 @@ class EcsClusterStackTest {
         ));
         template.hasResourceProperties("AWS::ECS::Service", Map.of(
                 "DesiredCount", 1
+        ));
+        template.hasResourceProperties("AWS::ServiceDiscovery::PrivateDnsNamespace", Map.of(
+                "Name", "example.internal"
+        ));
+        template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
+                "Name", "admin-api"
         ));
     }
 

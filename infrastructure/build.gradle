@@ -29,6 +29,8 @@ dependencies {
     testImplementation 'org.assertj:assertj-core:3.27.3'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testImplementation "com.github.stefanbirkner:system-lambda:1.2.1"
+    testImplementation 'org.mockito:mockito-inline:5.2.0'
+    implementation("io.github.cdimascio:dotenv-java:3.2.0")
 }
 
 application {
@@ -40,6 +42,8 @@ test {
     finalizedBy tasks.named("jacocoTestReport")
     environment "API_SERVER_REPOSITORY", "one-year-gap/api-server"
     environment "ADMIN_WEB_REPOSITORY", "one-year-gap/admin-web"
+    environment "VERCEL_APEX_IP", "203.0.113.10"
+    environment "DOMAIN_INTERNAL_NAME", "example.internal"
 }
 
 jacoco {
