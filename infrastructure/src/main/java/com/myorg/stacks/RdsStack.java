@@ -28,6 +28,7 @@ public class RdsStack extends Stack {
                         .secretStringTemplate("{\"username\":\"holliverse\"}")
                         .generateStringKey("password")
                         .includeSpace(false)
+                        .excludeCharacters("/@\" ")
                         .build())
                 .build();
 
@@ -39,12 +40,8 @@ public class RdsStack extends Stack {
                 .build();
 
         //inbound: API/SSM -> DB
-        dbSg.addIngressRule(customerApiSg, Port.tcp(5432), "Customer API -> DB");
-        dbSg.addIngressRule(adminApiSg, Port.tcp(5432), "Admin API -> DB");
-
-        //outbound
-        customerApiSg.addEgressRule(dbSg, Port.tcp(5432), "Customer API -> DB 5432");
-        adminApiSg.addEgressRule(dbSg, Port.tcp(5432), "Admin API -> DB 5432");
+        dbSg.addIngressRule(customerApiSg, Port.tcp(5432), "Customer API to DB");
+        dbSg.addIngressRule(adminApiSg, Port.tcp(5432), "Admin API to DB");
 
         SubnetSelection dbSubnets = SubnetSelection.builder()
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
