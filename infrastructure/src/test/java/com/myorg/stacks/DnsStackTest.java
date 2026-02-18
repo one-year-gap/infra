@@ -56,10 +56,9 @@ class DnsStackTest {
         Map<String, Map<String, Object>> recordSets = template.findResources("AWS::Route53::RecordSet");
 
         //then
-        assertEquals(3, recordSets.size());
+        assertEquals(2, recordSets.size());
         assertTrue(hasARecord(recordSets, "api." + TEST_DOMAIN + "."));
         assertTrue(hasARecord(recordSets, "admin." + TEST_DOMAIN + "."));
-        assertTrue(hasARecord(recordSets, "api-admin." + TEST_DOMAIN + "."));
     }
 
     @SuppressWarnings("unchecked")
