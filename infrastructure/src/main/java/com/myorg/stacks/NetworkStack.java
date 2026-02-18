@@ -12,7 +12,7 @@ import java.util.List;
 public class NetworkStack extends Stack {
     private final Vpc vpc;
     private final SecurityGroup customerAlbSg, customerApiSg;
-    private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg;
+    private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg;
 
     public NetworkStack(Construct scope, String id, StackProps props, NetworkStackConfig config) {
         super(scope, id, props);
@@ -92,6 +92,13 @@ public class NetworkStack extends Stack {
                 .disableInlineRules(true)
                 .build();
 
+        this.dbSg = SecurityGroup.Builder.create(this, "HolliverseDbSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("Database SecurityGroup: allow 5432 from API Server")
+                .build();
+
 
         /*
          * =================================================================
@@ -117,6 +124,17 @@ public class NetworkStack extends Stack {
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS out");
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
         customerApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        customerApiSg.addEgressRule(
+                Peer.securityGroupId(dbSg.getSecurityGroupId()),
+                Port.tcp(5432),
+                "To DB only"
+        );
+
+        dbSg.addIngressRule(
+                Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
+                Port.tcp(5432),
+                "Customer API to DB"
+        );
 
 
         /*
@@ -162,17 +180,21 @@ public class NetworkStack extends Stack {
                 "From Admin Web only (direct)"
         );
 
-        //Admin ALB -> Admin API
-        adminApiSg.addIngressRule(
-                Peer.securityGroupId(adminAlbSg.getSecurityGroupId()),
-                Port.tcp(adminServerPort),
-                "From Admin ALB (direct)"
-        );
-
 
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS");
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
         adminApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        adminApiSg.addEgressRule(
+                Peer.securityGroupId(dbSg.getSecurityGroupId()),
+                Port.tcp(5432),
+                "To DB only"
+        );
+
+        dbSg.addIngressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(5432),
+                "Admin API to DB"
+        );
     }
 
 
@@ -198,5 +220,9 @@ public class NetworkStack extends Stack {
 
     public SecurityGroup getAdminApiSg() {
         return adminApiSg;
+    }
+
+    public SecurityGroup getDbSg() {
+        return dbSg;
     }
 }

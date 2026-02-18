@@ -29,12 +29,5 @@ public class DnsStack extends Stack {
                 .recordName("admin")
                 .target(RecordTarget.fromAlias(new LoadBalancerTarget(dnsProps.adminAlb())))
                 .build());
-
-        //api-admin.xxxx.com -> AdminALB
-        new ARecord(this,"ApiAdminRecord", ARecordProps.builder()
-                .zone(dnsProps.zone())
-                .recordName("api-admin")
-                .target(RecordTarget.fromAlias(new LoadBalancerTarget(dnsProps.adminAlb())))
-                .build());
     }
 }
