@@ -17,7 +17,7 @@ public final class AppConfig {
      * @return 가용 영역 string
      */
     public static String getRegion() {
-        return getValue("REGION");
+        return getRequiredValue("REGION");
     }
 
     /**
@@ -39,14 +39,14 @@ public final class AppConfig {
     }
 
     public static String getVercelIp() {
-        return getValue("VERCEL_APEX_IP");
+        return getRequiredValue("VERCEL_APEX_IP");
     }
 
     /**
      * Route53 도메인 이름 반환
      */
     public static String getDomainName() {
-        return getValue("DOMAIN_NAME");
+        return getRequiredValue("DOMAIN_NAME");
     }
 
 
@@ -54,17 +54,59 @@ public final class AppConfig {
      * domain internal 주소
      */
     public static String getInternalDomainName(){
-        return getValue("DOMAIN_INTERNAL_NAME");
+        return getRequiredValue("DOMAIN_INTERNAL_NAME");
     }
 
-    private static String getValue(String key) {
-        String v = System.getenv(key);
-        if (v != null && !v.isBlank()) return v.trim();
-        v = DOTENV.get(key);
+    public static String getAccountId() {
+        String fromCdkDefaultAccount = getOptionalValue("CDK_DEFAULT_ACCOUNT");
+        if (fromCdkDefaultAccount != null) {
+            return fromCdkDefaultAccount;
+        }
 
-        if (v == null || v.isBlank()) {
+        String fromAwsAccountId = getOptionalValue("AWS_ACCOUNT_ID");
+        if (fromAwsAccountId != null) {
+            return fromAwsAccountId;
+        }
+
+        throw new IllegalStateException("환경 변수 CDK_DEFAULT_ACCOUNT 또는 AWS_ACCOUNT_ID가 존재하지 않습니다.");
+    }
+
+    public static String getDeployMode(String defaultValue) {
+        return getOptionalValueOrDefault("DEPLOY_MODE", defaultValue);
+    }
+
+    public static String getCustomerCertArn() {
+        return getRequiredValue("CUSTOMER_CERT_ARN");
+    }
+
+    public static String getAdminCertArn() {
+        return getRequiredValue("ADMIN_CERT_ARN");
+    }
+
+    public static String getRequiredValue(String key) {
+        String value = getOptionalValue(key);
+        if (value == null) {
             throw new IllegalStateException(key + "에 해당하는 환경변수가 존재하지 않습니다.");
         }
-        return v.trim();
+        return value;
+    }
+
+    public static String getOptionalValueOrDefault(String key, String defaultValue) {
+        String value = getOptionalValue(key);
+        return value != null ? value : defaultValue;
+    }
+
+    private static String getOptionalValue(String key) {
+        String value = System.getenv(key);
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+
+        value = DOTENV.get(key);
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+
+        return null;
     }
 }
