@@ -1,0 +1,172 @@
+name: customer-web-manual-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: "customer-fe 배포 ref (branch/tag/sha)"
+        required: true
+        default: "main"
+        type: string
+      release-label:
+        description: "release label"
+        required: true
+        type: choice
+        options:
+          - release:major
+          - release:minor
+          - release:patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: customer-web-manual-release
+  cancel-in-progress: false
+
+env:
+  CUSTOMER_WEB_SOURCE_REPO: one-year-gap/customer-fe
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version_tag: ${{ steps.bump.outputs.version_tag }}
+      target_sha: ${{ steps.bump.outputs.target_sha }}
+    steps:
+      - name: Checkout customer-fe
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CUSTOMER_WEB_SOURCE_REPO }}
+          ref: ${{ inputs.source-ref }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Bump semver and push tag
+        id: bump
+        shell: bash
+        env:
+          RELEASE_LABEL: ${{ inputs.release-label }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          RELEASE_LEVEL="${RELEASE_LABEL#release:}"
+          TARGET_SHA="$(git rev-parse HEAD)"
+
+          LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+
+          BASE="${LATEST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+
+          case "$RELEASE_LEVEL" in
+            major)
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1)); PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            *)
+              echo "Unsupported release level: $RELEASE_LEVEL" >&2
+              exit 1
+              ;;
+          esac
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+
+          if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $NEXT_TAG" >&2
+            exit 1
+          fi
+
+          git tag -a "$NEXT_TAG" "$TARGET_SHA" -m "release: $NEXT_TAG"
+          git push origin "$NEXT_TAG"
+
+          echo "version_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+  create-github-release:
+    runs-on: ubuntu-latest
+    needs: [create-tag]
+    steps:
+      - name: Create GitHub Release (customer-fe)
+        uses: actions/github-script@v7
+        env:
+          SOURCE_REPO: ${{ env.CUSTOMER_WEB_SOURCE_REPO }}
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          TARGET_SHA: ${{ needs.create-tag.outputs.target_sha }}
+          RELEASE_LABEL: ${{ inputs.release-label }}
+        with:
+          github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.SOURCE_REPO.split("/");
+            const tag = process.env.VERSION_TAG;
+            const targetSha = process.env.TARGET_SHA;
+            const releaseLabel = process.env.RELEASE_LABEL;
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner, repo, tag
+              });
+              core.notice(`Release already exists: ${existing.data.html_url}`);
+              return;
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
+            const created = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              target_commitish: targetSha,
+              name: `${tag}`,
+              body: `release-label: ${releaseLabel}`,
+              draft: false,
+              prerelease: false,
+              generate_release_notes: true
+            });
+
+            core.info(`Created release: ${created.data.html_url}`);
+
+  deploy-vercel:
+    runs-on: ubuntu-latest
+    needs: [create-tag, create-github-release]
+    steps:
+      - name: Checkout customer-fe
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CUSTOMER_WEB_SOURCE_REPO }}
+          ref: ${{ needs.create-tag.outputs.target_sha }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Vercel Pull (production)
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Vercel Build
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Vercel Deploy (manual)
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "customer-web released: ${{ needs.create-tag.outputs.version_tag }}"
