@@ -6,6 +6,7 @@ import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.secretsmanager.Secret;
+import software.amazon.awscdk.services.servicediscovery.INamespace;
 import software.constructs.Construct;
 
 public record FargateApiServiceProps(
@@ -28,6 +29,10 @@ public record FargateApiServiceProps(
 
         String springProfile,//spring profile = customer,admin
         String jdbcUrl,
-        Secret dbSecret
+        Secret dbSecret,
+
+        //Cloud Map
+        INamespace cloudMapNamespace,
+        String cloudMapServiceName
 ) {
 }
