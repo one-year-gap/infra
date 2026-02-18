@@ -18,7 +18,7 @@ public class RdsStack extends Stack {
     private final DatabaseInstance rds;
     private final SecurityGroup dbSg;
 
-    public RdsStack(Construct scope, String id, StackProps props, Vpc vpc, SecurityGroup customerApiSg, SecurityGroup adminApiSg) {
+    public RdsStack(Construct scope, String id, StackProps props, Vpc vpc, SecurityGroup dbSg) {
         super(scope, id, props);
 
         //Database SecretManager
@@ -32,16 +32,7 @@ public class RdsStack extends Stack {
                         .build())
                 .build();
 
-        //Database SecurityGroup
-        this.dbSg = SecurityGroup.Builder.create(this, "HolliverseDbSg")
-                .vpc(vpc)
-                .allowAllOutbound(false)
-                .description("Database SecurityGroup: allow 5432 from API Server")
-                .build();
-
-        //inbound: API/SSM -> DB
-        dbSg.addIngressRule(customerApiSg, Port.tcp(5432), "Customer API to DB");
-        dbSg.addIngressRule(adminApiSg, Port.tcp(5432), "Admin API to DB");
+        this.dbSg = dbSg;
 
         SubnetSelection dbSubnets = SubnetSelection.builder()
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)

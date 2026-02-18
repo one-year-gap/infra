@@ -6,6 +6,7 @@ import software.amazon.awscdk.App;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.assertions.Template;
+import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.Vpc;
 
@@ -30,14 +31,19 @@ class RdsStackTest {
         SecurityGroup adminApiSg = SecurityGroup.Builder.create(fixtureStack, "TestAdminApiSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup dbSg = SecurityGroup.Builder.create(fixtureStack, "TestDbSg")
+                .vpc(vpc)
+                .build();
+
+        dbSg.addIngressRule(customerApiSg, Port.tcp(5432), "Customer API to DB");
+        dbSg.addIngressRule(adminApiSg, Port.tcp(5432), "Admin API to DB");
 
         RdsStack rdsStack = new RdsStack(
                 app,
                 "RdsStackTest",
                 StackProps.builder().build(),
                 vpc,
-                customerApiSg,
-                adminApiSg
+                dbSg
         );
         Template template = Template.fromStack(rdsStack);
 
@@ -49,7 +55,7 @@ class RdsStackTest {
         //then
         assertEquals(1, dbInstances.size());
         assertEquals(1, secrets.size());
-        assertEquals(1, securityGroups.size());
+        assertEquals(0, securityGroups.size());
 
         template.hasResourceProperties("AWS::RDS::DBInstance", Map.of(
                 "Engine", "postgres",

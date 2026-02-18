@@ -169,8 +169,7 @@ public class InfrastructureApp {
                 RDS_STACK_ID,
                 context.stackProps(),
                 networkStack.getVpc(),
-                networkStack.getCustomerApiSg(),
-                networkStack.getAdminApiSg()
+                networkStack.getDbSg()
         );
     }
 

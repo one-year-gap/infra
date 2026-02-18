@@ -17,6 +17,7 @@ class NetworkStackTest {
     private String adminAlbSgLogicalId;
     private String adminWebSgLogicalId;
     private String adminApiSgLogicalId;
+    private String dbSgLogicalId;
 
     private static final List<String> allowedIpsList = List.of(
             "203.0.113.10/32",
@@ -55,6 +56,8 @@ class NetworkStackTest {
                 "Admin Web(ECS) Security Group");
         adminApiSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Admin API Server(ECS) Security Group");
+        dbSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Database SecurityGroup: allow 5432 from API Server");
     }
 
     @SuppressWarnings("unchecked")
@@ -173,6 +176,16 @@ class NetworkStackTest {
                 });
     }
 
+    private void assertNoEgressCidrOnPort(String sgLogicalId, String ipProtocol, int port) {
+        assertThat(egressRulesFor(sgLogicalId))
+                .noneSatisfy(props -> {
+                    assertThat(props.get("IpProtocol")).isEqualTo(ipProtocol);
+                    assertThat(intProp(props, "FromPort")).isEqualTo(port);
+                    assertThat(intProp(props, "ToPort")).isEqualTo(port);
+                    assertThat(props).containsKey("CidrIp");
+                });
+    }
+
     @Nested
     @DisplayName("VPC 구성 Test")
     class VPCTest{
@@ -237,6 +250,13 @@ class NetworkStackTest {
         void shouldAllowDnsOutbound() {
             assertEgressCidrRule(customerApiSgLogicalId, "tcp", 53, "0.0.0.0/0");
         }
+
+        @Test
+        @DisplayName("DB(5432) 아웃바운드를 DB SG로만 허용한다")
+        void shouldAllowDbOutboundToDbSecurityGroupOnly() {
+            assertEgressToSecurityGroup(customerApiSgLogicalId, dbSgLogicalId, 5432);
+            assertNoEgressCidrOnPort(customerApiSgLogicalId, "tcp", 5432);
+        }
     }
     @Nested
     @DisplayName("Admin ALB Security Group")
@@ -296,11 +316,35 @@ class NetworkStackTest {
         void shouldAllowInboundFromAdminAlbOnly() {
             assertIngressFromSecurityGroup(adminApiSgLogicalId, adminWebSgLogicalId, ADMIN_SERVER_PORT);
         }
+
+        @Test
+        @DisplayName("DB(5432) 아웃바운드를 DB SG로만 허용한다")
+        void shouldAllowDbOutboundToDbSecurityGroupOnly() {
+            assertEgressToSecurityGroup(adminApiSgLogicalId, dbSgLogicalId, 5432);
+            assertNoEgressCidrOnPort(adminApiSgLogicalId, "tcp", 5432);
+        }
     }
 
-    @DisplayName("Security Group은 5개 생성된다 - CustomerAlbSg, CusteomerApiSg, AdminAlbSg, AdminWebSg, AdminApiSg")
+    @Nested
+    @DisplayName("Database Security Group")
+    class DatabaseSgTest {
+
+        @Test
+        @DisplayName("Customer API에서만 DB 5432 인바운드를 허용한다")
+        void shouldAllowInboundFromCustomerApiOnly() {
+            assertIngressFromSecurityGroup(dbSgLogicalId, customerApiSgLogicalId, 5432);
+        }
+
+        @Test
+        @DisplayName("Admin API에서만 DB 5432 인바운드를 허용한다")
+        void shouldAllowInboundFromAdminApiOnly() {
+            assertIngressFromSecurityGroup(dbSgLogicalId, adminApiSgLogicalId, 5432);
+        }
+    }
+
+    @DisplayName("Security Group은 6개 생성된다 - CustomerAlbSg, CustomerApiSg, AdminAlbSg, AdminWebSg, AdminApiSg, DbSg")
     @Test
-    void should_create_five_security_groups(){
-        template.resourceCountIs("AWS::EC2::SecurityGroup",5);
+    void should_create_six_security_groups(){
+        template.resourceCountIs("AWS::EC2::SecurityGroup",6);
     }
 }
