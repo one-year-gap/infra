@@ -1,0 +1,470 @@
+name: central-release-orchestrator
+
+on:
+  workflow_call:
+    inputs:
+      source-repo:
+        description: "owner/repo"
+        required: true
+        type: string
+      source-sha:
+        description: "merged commit sha on main"
+        required: true
+        type: string
+    secrets:
+      CENTRAL_REPO_TOKEN:
+        required: true
+  repository_dispatch:
+    types: [release-request]
+  workflow_dispatch:
+    inputs:
+      source-repo:
+        description: "owner/repo"
+        required: true
+        default: "one-year-gap/api-server"
+        type: string
+      source-sha:
+        description: "target sha (empty = HEAD of default branch)"
+        required: false
+        default: ""
+        type: string
+      release-label:
+        description: "release label"
+        required: true
+        type: choice
+        options:
+          - release:major
+          - release:minor
+          - release:patch
+      deploy-labels:
+        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web)"
+        required: true
+        default: "deploy:api-server"
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: read
+  id-token: write
+
+concurrency:
+  group: central-release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Required AWS/Auth
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
+  AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+
+  # Required CDK app envs
+  REGION: ${{ secrets.AWS_REGION }}
+  ADMIN_ALLOWED_CIDRS: ${{ secrets.ADMIN_ALLOWED_CIDRS }}
+  ADMIN_WEB_PORT: ${{ secrets.ADMIN_WEB_PORT }}
+  CUSTOMER_WEB_PORT: ${{ secrets.CUSTOMER_WEB_PORT }}
+  ADMIN_SERVER_PORT: ${{ secrets.ADMIN_SERVER_PORT }}
+  CUSTOMER_SERVER_PORT: ${{ secrets.CUSTOMER_SERVER_PORT }}
+  ADMIN_WEB_REPOSITORY: ${{ secrets.ADMIN_WEB_REPOSITORY }}
+  API_SERVER_REPOSITORY: ${{ secrets.API_SERVER_REPOSITORY }}
+  DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
+  VERCEL_APEX_IP: ${{ secrets.VERCEL_APEX_IP }}
+  DOMAIN_INTERNAL_NAME: ${{ secrets.DOMAIN_INTERNAL_NAME }}
+  CUSTOMER_CERT_ARN: ${{ secrets.CUSTOMER_CERT_ARN }}
+  ADMIN_CERT_ARN: ${{ secrets.ADMIN_CERT_ARN }}
+
+  # Source repos
+  API_SERVER_SOURCE_REPO: one-year-gap/api-server
+  ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
+
+jobs:
+  resolve-context:
+    runs-on: ubuntu-latest
+    outputs:
+      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      release_label: ${{ steps.resolve.outputs.release_label }}
+      release_level: ${{ steps.resolve.outputs.release_level }}
+      deploy_labels_json: ${{ steps.resolve.outputs.deploy_labels_json }}
+    steps:
+      - name: Resolve source + labels
+        id: resolve
+        uses: actions/github-script@v7
+        env:
+          IN_SOURCE_REPO: ${{ inputs.source-repo }}
+          IN_SOURCE_SHA: ${{ inputs.source-sha }}
+          IN_RELEASE_LABEL: ${{ inputs.release-label }}
+          IN_DEPLOY_LABELS: ${{ inputs.deploy-labels }}
+        with:
+          github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          script: |
+            const releaseAllowed = ["release:major", "release:minor", "release:patch"];
+            const deployAllowed = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web"];
+
+            function splitRepo(full) {
+              const parts = String(full || "").trim().split("/");
+              if (parts.length !== 2 || !parts[0] || !parts[1]) {
+                throw new Error(`invalid source-repo: ${full}`);
+              }
+              return { owner: parts[0], repo: parts[1], full: `${parts[0]}/${parts[1]}` };
+            }
+
+            function parseDeployLabels(raw) {
+              return String(raw || "")
+                .split(",")
+                .map(v => v.trim())
+                .filter(Boolean);
+            }
+
+            let sourceRepo;
+            let sourceSha;
+            let releaseLabel;
+            let deployLabels = [];
+
+            if (context.eventName === "workflow_dispatch") {
+              sourceRepo = process.env.IN_SOURCE_REPO;
+              sourceSha = process.env.IN_SOURCE_SHA;
+              releaseLabel = process.env.IN_RELEASE_LABEL;
+              deployLabels = parseDeployLabels(process.env.IN_DEPLOY_LABELS);
+            } else if (context.eventName === "workflow_call") {
+              sourceRepo = process.env.IN_SOURCE_REPO;
+              sourceSha = process.env.IN_SOURCE_SHA;
+            } else if (context.eventName === "repository_dispatch") {
+              sourceRepo = context.payload.client_payload?.source_repo;
+              sourceSha = context.payload.client_payload?.source_sha;
+            } else {
+              throw new Error(`unsupported event: ${context.eventName}`);
+            }
+
+            const { owner, repo, full } = splitRepo(sourceRepo);
+
+            if (!releaseLabel || deployLabels.length === 0) {
+              if (!sourceSha) {
+                throw new Error("source-sha is required when labels are not manually provided");
+              }
+
+              const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: sourceSha
+              });
+
+              const mergedToMain = prs.data
+                .filter(pr => pr.merged_at && pr.base?.ref === "main")
+                .sort((a, b) => new Date(b.merged_at) - new Date(a.merged_at));
+
+              const pr = mergedToMain[0] || prs.data[0];
+              if (!pr) {
+                throw new Error(`No associated PR found for ${full}@${sourceSha}`);
+              }
+
+              const labels = (pr.labels || []).map(l => l.name);
+              const release = labels.filter(l => releaseAllowed.includes(l));
+              const deploy = labels.filter(l => deployAllowed.includes(l));
+
+              if (release.length !== 1) {
+                throw new Error(`release label must be exactly one. found=${release.join(",") || "none"}`);
+              }
+              if (deploy.length < 1) {
+                throw new Error("at least one deploy label is required");
+              }
+
+              releaseLabel = release[0];
+              deployLabels = deploy;
+            }
+
+            if (!releaseAllowed.includes(releaseLabel)) {
+              throw new Error(`invalid release label: ${releaseLabel}`);
+            }
+
+            for (const label of deployLabels) {
+              if (!deployAllowed.includes(label)) {
+                throw new Error(`invalid deploy label: ${label}`);
+              }
+            }
+
+            if (deployLabels.includes("deploy:customer-web")) {
+              throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
+            }
+
+            if (sourceSha) {
+              sourceSha = String(sourceSha).trim();
+            }
+
+            const releaseLevel = releaseLabel.replace("release:", "");
+
+            core.setOutput("source_repo", full);
+            core.setOutput("source_sha", sourceSha || "");
+            core.setOutput("release_label", releaseLabel);
+            core.setOutput("release_level", releaseLevel);
+            core.setOutput("deploy_labels_json", JSON.stringify(deployLabels));
+
+  create-tag:
+    runs-on: ubuntu-latest
+    needs: [resolve-context]
+    outputs:
+      version_tag: ${{ steps.bump.outputs.version_tag }}
+      target_sha: ${{ steps.bump.outputs.target_sha }}
+    steps:
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.resolve-context.outputs.source_repo }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Bump semver and push tag
+        id: bump
+        shell: bash
+        env:
+          RELEASE_LEVEL: ${{ needs.resolve-context.outputs.release_level }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          TARGET_SHA="$SOURCE_SHA"
+          if [ -z "$TARGET_SHA" ]; then
+            TARGET_SHA="$(git rev-parse HEAD)"
+          fi
+
+          LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+
+          BASE="${LATEST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
+
+          case "$RELEASE_LEVEL" in
+            major)
+              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1)); PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            *)
+              echo "Unsupported RELEASE_LEVEL=$RELEASE_LEVEL" >&2
+              exit 1
+              ;;
+          esac
+
+          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+
+          if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $NEXT_TAG" >&2
+            exit 1
+          fi
+
+          git tag -a "$NEXT_TAG" "$TARGET_SHA" -m "release: $NEXT_TAG"
+          git push origin "$NEXT_TAG"
+
+          echo "version_tag=$NEXT_TAG" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+  create-github-release:
+    runs-on: ubuntu-latest
+    needs: [resolve-context, create-tag]
+    steps:
+      - name: Create GitHub Release (source repo)
+        uses: actions/github-script@v7
+        env:
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          TARGET_SHA: ${{ needs.create-tag.outputs.target_sha }}
+          RELEASE_LABEL: ${{ needs.resolve-context.outputs.release_label }}
+          DEPLOY_LABELS_JSON: ${{ needs.resolve-context.outputs.deploy_labels_json }}
+        with:
+          github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.SOURCE_REPO.split("/");
+            const tag = process.env.VERSION_TAG;
+            const targetSha = process.env.TARGET_SHA;
+            const releaseLabel = process.env.RELEASE_LABEL;
+            const deployLabels = JSON.parse(process.env.DEPLOY_LABELS_JSON || "[]");
+
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner, repo, tag
+              });
+              core.notice(`Release already exists: ${existing.data.html_url}`);
+              return;
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+
+            const header = [
+              `release-label: ${releaseLabel}`,
+              `deploy-labels: ${deployLabels.join(", ") || "none"}`
+            ].join("\n");
+
+            const created = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              target_commitish: targetSha,
+              name: `${tag}`,
+              body: header,
+              draft: false,
+              prerelease: false,
+              generate_release_notes: true
+            });
+
+            core.info(`Created release: ${created.data.html_url}`);
+
+  build-and-push-api-server:
+    runs-on: ubuntu-latest
+    needs: [resolve-context, create-tag]
+    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:api-server')
+    steps:
+      - name: Checkout api-server
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.API_SERVER_SOURCE_REPO }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout source sha if source repo is api-server
+        if: needs.resolve-context.outputs.source_repo == env.API_SERVER_SOURCE_REPO && needs.resolve-context.outputs.source_sha != ''
+        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push API images
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REPO="${REGISTRY}/${API_SERVER_REPOSITORY}"
+
+          docker build --platform linux/amd64 \
+            --build-arg PROFILE=customer \
+            -t "${REPO}:customer-${VERSION_TAG}" \
+            -t "${REPO}:customer-latest" \
+            .
+
+          docker push "${REPO}:customer-${VERSION_TAG}"
+          docker push "${REPO}:customer-latest"
+
+          docker build --platform linux/amd64 \
+            --build-arg PROFILE=admin \
+            -t "${REPO}:admin-${VERSION_TAG}" \
+            -t "${REPO}:admin-latest" \
+            .
+
+          docker push "${REPO}:admin-${VERSION_TAG}"
+          docker push "${REPO}:admin-latest"
+
+  build-and-push-admin-web:
+    runs-on: ubuntu-latest
+    needs: [resolve-context, create-tag]
+    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:admin-web')
+    steps:
+      - name: Checkout admin-web
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.ADMIN_WEB_SOURCE_REPO }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout source sha if source repo is admin-web
+        if: needs.resolve-context.outputs.source_repo == env.ADMIN_WEB_SOURCE_REPO && needs.resolve-context.outputs.source_sha != ''
+        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Admin Web image
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REPO="${REGISTRY}/${ADMIN_WEB_REPOSITORY}"
+
+          docker build --platform linux/amd64 \
+            -t "${REPO}:${VERSION_TAG}" \
+            -t "${REPO}:latest" \
+            .
+
+          docker push "${REPO}:${VERSION_TAG}"
+          docker push "${REPO}:latest"
+
+  deploy-ecs:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-context
+      - create-tag
+      - create-github-release
+      - build-and-push-api-server
+      - build-and-push-admin-web
+    if: |
+      always() &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-github-release.result == 'success' &&
+      (needs.build-and-push-api-server.result == 'success' || needs.build-and-push-api-server.result == 'skipped') &&
+      (needs.build-and-push-admin-web.result == 'success' || needs.build-and-push-admin-web.result == 'skipped')
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk@latest
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy ECS stack (image rollout)
+        shell: bash
+        working-directory: infrastructure
+        env:
+          DEPLOY_MODE: ecs
+          ADMIN_API_IMAGE_TAG: admin-latest
+          CUSTOMER_API_IMAGE_TAG: customer-latest
+          ADMIN_WEB_IMAGE_TAG: latest
+        run: |
+          set -euo pipefail
+          cdk deploy EcsClusterStack --require-approval never
+
+      - name: Summary
+        run: |
+          echo "release=${{ needs.create-tag.outputs.version_tag }}"
+          echo "deploy_labels=${{ needs.resolve-context.outputs.deploy_labels_json }}"

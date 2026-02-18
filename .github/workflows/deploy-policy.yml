@@ -1,0 +1,71 @@
+name: deploy-policy
+
+on:
+  pull_request:
+    branches: ["main"]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+  issues: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync release label from PR body and validate (deploy template only)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed("Not a pull_request event");
+              return;
+            }
+
+            const body = pr.body || "";
+            const marker = "<!-- template:deploy_pr -->";
+
+            // deploy_pr_template로 작성된 PR만 대상
+            if (!body.includes(marker)) {
+              core.notice("Skip: not a deploy PR template");
+              return;
+            }
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const currentLabels = (pr.labels || []).map(l => l.name);
+
+            const RELEASE = ["release:major", "release:minor", "release:patch"];
+
+            const isChecked = (label) => {
+              const escaped = label.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+              return new RegExp(`-\\s*\\[x\\]\\s*${escaped}\\b`, "i").test(body);
+            };
+
+            const checked = RELEASE.filter(isChecked);
+
+            // release 체크는 정확히 1개여야 함
+            if (checked.length !== 1) {
+              core.setFailed(`Release level must be exactly 1 (major/minor/patch). Found: ${checked.join(", ") || "none"}`);
+              return;
+            }
+
+            // 체크된 라벨이 없으면 자동 부착
+            const toAdd = checked.filter(l => !currentLabels.includes(l));
+            if (toAdd.length) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: pr.number,
+                labels: toAdd,
+              });
+            }
+
+            // 최종 검증
+            const final = new Set([...currentLabels, ...toAdd]);
+            const releaseLabels = RELEASE.filter(l => final.has(l));
+            if (releaseLabels.length !== 1) {
+              core.setFailed(`Release label must be exactly 1. Found: ${releaseLabels.join(", ") || "none"}`);
+            }

@@ -3,3 +3,6 @@
 .idea/*
 build
 .gradle-local
+
+config/prod.vars.json
+config/prod.secrets.json
