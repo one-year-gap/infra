@@ -50,6 +50,13 @@ public final class AppConfig {
     }
 
 
+    /**
+     * domain internal 주소
+     */
+    public static String getInternalDomainName(){
+        return getValue("DOMAIN_INTERNAL_NAME");
+    }
+
     private static String getValue(String key) {
         String v = System.getenv(key);
         if (v != null && !v.isBlank()) return v.trim();
