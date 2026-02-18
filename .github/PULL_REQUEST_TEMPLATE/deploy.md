@@ -4,9 +4,23 @@
 
 <br/>
 
-## 📦배포 대상
-<!-- 배포 대상 브랜치/태그/서비스(예: api-server, worker 등) 작성 -->
+## 🏷️ Release Level 
 
+<!-- 아래 중 정확히 1개만 체크 -->
+
+- [ ] release:major <!-- X.0.0 --> 
+- [ ] release:minor <!-- X.Y.0 --> 
+- [ ] release:patch <!-- X.Y.(Z+1) --> 
+
+<br/> 
+
+## 📦 배포 대상 (1개 이상) 
+
+<!-- 배포 대상 라벨(1개 이상) 체크 --> 
+
+- [ ] deploy:api-server
+- [ ] deploy:customer-web
+- [ ] deploy:admin-web
 
 <br/>
 
