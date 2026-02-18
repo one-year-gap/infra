@@ -93,7 +93,7 @@ public class EcsClusterStack extends Stack {
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
                 .build();
 
-        PrivateDnsNamespace servieNs = PrivateDnsNamespace.Builder.create(this, DOMAIN_NAME_SPACE)
+        PrivateDnsNamespace serviceNs = PrivateDnsNamespace.Builder.create(this, DOMAIN_NAME_SPACE)
                 .vpc(vpc)
                 .name(AppConfig.getInternalDomainName())
                 .build();
@@ -158,7 +158,7 @@ public class EcsClusterStack extends Stack {
                 PROFILE_ADMIN,
                 dbUrl,
                 dbSecret,
-                servieNs,
+                serviceNs,
                 "admin-api"
         );
 
