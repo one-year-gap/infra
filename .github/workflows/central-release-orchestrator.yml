@@ -14,6 +14,36 @@ on:
     secrets:
       CENTRAL_REPO_TOKEN:
         required: true
+      AWS_REGION:
+        required: true
+      CDK_DEFAULT_ACCOUNT:
+        required: true
+      AWS_DEPLOY_ROLE_ARN:
+        required: true
+      ADMIN_ALLOWED_CIDRS:
+        required: true
+      ADMIN_WEB_PORT:
+        required: true
+      CUSTOMER_WEB_PORT:
+        required: true
+      ADMIN_SERVER_PORT:
+        required: true
+      CUSTOMER_SERVER_PORT:
+        required: true
+      ADMIN_WEB_REPOSITORY:
+        required: true
+      API_SERVER_REPOSITORY:
+        required: true
+      DOMAIN_NAME:
+        required: true
+      VERCEL_APEX_IP:
+        required: true
+      DOMAIN_INTERNAL_NAME:
+        required: true
+      CUSTOMER_CERT_ARN:
+        required: true
+      ADMIN_CERT_ARN:
+        required: true
 
   repository_dispatch:
     types: [release-request]
@@ -244,10 +274,25 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
     steps:
+      - name: Guard required outputs
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SOURCE_REPO}" ]; then
+            echo "::error::resolve-context output source_repo is empty. Aborting to prevent checkout fallback to current repo."
+            exit 1
+          fi
+          echo "resolved-source-repo=$SOURCE_REPO"
+          echo "resolved-source-sha=${SOURCE_SHA:-<empty>}"
+
       - name: Checkout source repo (at source sha)
         if: needs.resolve-context.outputs.source_sha != ''
         uses: actions/checkout@v4
