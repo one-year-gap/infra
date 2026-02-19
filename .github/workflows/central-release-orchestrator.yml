@@ -207,12 +207,38 @@ jobs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
     steps:
-      - name: Checkout source repo
+      - name: Checkout source repo (at source sha)
+        if: needs.resolve-context.outputs.source_sha != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.resolve-context.outputs.source_repo }}
+          ref: ${{ needs.resolve-context.outputs.source_sha }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout source repo (default branch)
+        if: needs.resolve-context.outputs.source_sha == ''
         uses: actions/checkout@v4
         with:
           repository: ${{ needs.resolve-context.outputs.source_repo }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
+
+      - name: Validate source context
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          echo "source-repo=$SOURCE_REPO"
+          echo "source-sha=${SOURCE_SHA:-<empty>}"
+          if [ -n "${SOURCE_SHA}" ]; then
+            git cat-file -e "${SOURCE_SHA}^{commit}" || {
+              echo "::error::source-sha does not exist in source-repo. source-repo=$SOURCE_REPO source-sha=$SOURCE_SHA"
+              exit 1
+            }
+          fi
 
       - name: Bump semver and push tag
         id: bump
@@ -326,15 +352,29 @@ jobs:
     needs: [resolve-context, create-tag]
     if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:api-server')
     steps:
+      - name: Resolve api-server source repository
+        id: resolve-api-repo
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_REPO" == *"/api-server"* ]]; then
+            echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout api-server
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.API_SERVER_SOURCE_REPO }}
+          repository: ${{ steps.resolve-api-repo.outputs.repo }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is api-server
-        if: needs.resolve-context.outputs.source_repo == env.API_SERVER_SOURCE_REPO && needs.resolve-context.outputs.source_sha != ''
+        if: contains(needs.resolve-context.outputs.source_repo, '/api-server') && needs.resolve-context.outputs.source_sha != ''
         run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
 
       - name: Configure AWS credentials
@@ -378,15 +418,29 @@ jobs:
     needs: [resolve-context, create-tag]
     if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:admin-web')
     steps:
+      - name: Resolve admin-web source repository
+        id: resolve-admin-repo
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_REPO" == *"/admin-fe"* ]]; then
+            echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout admin-web
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.ADMIN_WEB_SOURCE_REPO }}
+          repository: ${{ steps.resolve-admin-repo.outputs.repo }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is admin-web
-        if: needs.resolve-context.outputs.source_repo == env.ADMIN_WEB_SOURCE_REPO && needs.resolve-context.outputs.source_sha != ''
+        if: contains(needs.resolve-context.outputs.source_repo, '/admin-fe') && needs.resolve-context.outputs.source_sha != ''
         run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
 
       - name: Configure AWS credentials
