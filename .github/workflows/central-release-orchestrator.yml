@@ -616,22 +616,106 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy ECS stack (image rollout)
+        id: deploy-ecs
         shell: bash
         working-directory: infrastructure
         env:
           DEPLOY_MODE: ecs
           RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          DEPLOY_LABELS_JSON: ${{ needs.resolve-context.outputs.deploy_labels_json }}
         run: |
           set -euo pipefail
-          export ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
-          export CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
-          export ADMIN_WEB_IMAGE_TAG="${RELEASE_TAG}"
+
+          SERVICE_ROWS="$(aws cloudformation describe-stack-resources \
+            --region "$AWS_REGION" \
+            --stack-name EcsClusterStack \
+            --query "StackResources[?ResourceType=='AWS::ECS::Service'].[LogicalResourceId,PhysicalResourceId]" \
+            --output text || true)"
+
+          current_tag_for_service_prefix() {
+            local logical_prefix="$1"
+            local fallback="$2"
+            local service_arn=""
+            local cluster_name=""
+            local service_name=""
+            local task_def_arn=""
+            local image=""
+            local image_no_digest=""
+
+            service_arn="$(echo "$SERVICE_ROWS" | awk -v pfx="$logical_prefix" '$1 ~ "^"pfx {print $2; exit}')"
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              echo "$fallback"
+              return
+            fi
+
+            cluster_name="$(echo "$service_arn" | awk -F'/' '{print $(NF-1)}')"
+            service_name="$(echo "$service_arn" | awk -F'/' '{print $NF}')"
+
+            task_def_arn="$(aws ecs describe-services \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --services "$service_name" \
+              --query "services[0].taskDefinition" \
+              --output text 2>/dev/null || true)"
+
+            if [ -z "$task_def_arn" ] || [ "$task_def_arn" = "None" ]; then
+              echo "$fallback"
+              return
+            fi
+
+            image="$(aws ecs describe-task-definition \
+              --region "$AWS_REGION" \
+              --task-definition "$task_def_arn" \
+              --query "taskDefinition.containerDefinitions[0].image" \
+              --output text 2>/dev/null || true)"
+
+            if [ -z "$image" ] || [ "$image" = "None" ]; then
+              echo "$fallback"
+              return
+            fi
+
+            image_no_digest="${image%@*}"
+            if [[ "$image_no_digest" != *:* ]]; then
+              echo "$fallback"
+              return
+            fi
+
+            echo "${image_no_digest##*:}"
+          }
+
+          current_admin_web_tag="$(current_tag_for_service_prefix "AdminWebService" "latest")"
+          current_admin_api_tag="$(current_tag_for_service_prefix "AdminApiService" "latest")"
+          current_customer_api_tag="$(current_tag_for_service_prefix "CustomerApiService" "latest")"
+
+          ADMIN_WEB_IMAGE_TAG="$current_admin_web_tag"
+          ADMIN_API_IMAGE_TAG="$current_admin_api_tag"
+          CUSTOMER_API_IMAGE_TAG="$current_customer_api_tag"
+
+          if [[ "$DEPLOY_LABELS_JSON" == *"deploy:admin-web"* ]]; then
+            ADMIN_WEB_IMAGE_TAG="$RELEASE_TAG"
+          fi
+
+          if [[ "$DEPLOY_LABELS_JSON" == *"deploy:api-server"* ]]; then
+            ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
+            CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
+          fi
+
+          export ADMIN_WEB_IMAGE_TAG
+          export ADMIN_API_IMAGE_TAG
+          export CUSTOMER_API_IMAGE_TAG
+
+          {
+            echo "admin_web_image_tag=$ADMIN_WEB_IMAGE_TAG"
+            echo "admin_api_image_tag=$ADMIN_API_IMAGE_TAG"
+            echo "customer_api_image_tag=$CUSTOMER_API_IMAGE_TAG"
+          } >> "$GITHUB_OUTPUT"
+
           cdk deploy EcsClusterStack --exclusively --require-approval never
 
       - name: Summary
         run: |
           echo "release=${{ needs.create-tag.outputs.version_tag }}"
           echo "deploy_labels=${{ needs.resolve-context.outputs.deploy_labels_json }}"
-          echo "admin_api_image_tag=admin-${{ needs.create-tag.outputs.version_tag }}"
-          echo "customer_api_image_tag=customer-${{ needs.create-tag.outputs.version_tag }}"
-          echo "admin_web_image_tag=${{ needs.create-tag.outputs.version_tag }}"
+          echo "admin_api_image_tag=${{ steps.deploy-ecs.outputs.admin_api_image_tag }}"
+          echo "customer_api_image_tag=${{ steps.deploy-ecs.outputs.customer_api_image_tag }}"
+          echo "admin_web_image_tag=${{ steps.deploy-ecs.outputs.admin_web_image_tag }}"
