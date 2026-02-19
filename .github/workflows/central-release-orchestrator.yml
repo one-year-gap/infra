@@ -492,18 +492,28 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           REPO="${REGISTRY}/${API_SERVER_REPOSITORY}"
+          CUSTOMER_TAG="customer-${VERSION_TAG}"
+          ADMIN_TAG="admin-${VERSION_TAG}"
 
-          docker build --platform linux/amd64 \
-            --build-arg PROFILE=customer \
-            -t "${REPO}:customer-${VERSION_TAG}" \
-            .
-          docker push "${REPO}:customer-${VERSION_TAG}"
+          if aws ecr describe-images --repository-name "${API_SERVER_REPOSITORY}" --image-ids imageTag="${CUSTOMER_TAG}" >/dev/null 2>&1; then
+            echo "Skip push: ${REPO}:${CUSTOMER_TAG} already exists."
+          else
+            docker build --platform linux/amd64 \
+              --build-arg PROFILE=customer \
+              -t "${REPO}:${CUSTOMER_TAG}" \
+              .
+            docker push "${REPO}:${CUSTOMER_TAG}"
+          fi
 
-          docker build --platform linux/amd64 \
-            --build-arg PROFILE=admin \
-            -t "${REPO}:admin-${VERSION_TAG}" \
-            .
-          docker push "${REPO}:admin-${VERSION_TAG}"
+          if aws ecr describe-images --repository-name "${API_SERVER_REPOSITORY}" --image-ids imageTag="${ADMIN_TAG}" >/dev/null 2>&1; then
+            echo "Skip push: ${REPO}:${ADMIN_TAG} already exists."
+          else
+            docker build --platform linux/amd64 \
+              --build-arg PROFILE=admin \
+              -t "${REPO}:${ADMIN_TAG}" \
+              .
+            docker push "${REPO}:${ADMIN_TAG}"
+          fi
 
   build-and-push-admin-web:
     runs-on: ubuntu-latest
@@ -556,11 +566,14 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           REPO="${REGISTRY}/${ADMIN_WEB_REPOSITORY}"
-
-          docker build --platform linux/amd64 \
-            -t "${REPO}:${VERSION_TAG}" \
-            .
-          docker push "${REPO}:${VERSION_TAG}"
+          if aws ecr describe-images --repository-name "${ADMIN_WEB_REPOSITORY}" --image-ids imageTag="${VERSION_TAG}" >/dev/null 2>&1; then
+            echo "Skip push: ${REPO}:${VERSION_TAG} already exists."
+          else
+            docker build --platform linux/amd64 \
+              -t "${REPO}:${VERSION_TAG}" \
+              .
+            docker push "${REPO}:${VERSION_TAG}"
+          fi
 
   deploy-ecs:
     runs-on: ubuntu-latest
@@ -613,7 +626,7 @@ jobs:
           export ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
           export CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
           export ADMIN_WEB_IMAGE_TAG="${RELEASE_TAG}"
-          cdk deploy EcsClusterStack --require-approval never
+          cdk deploy EcsClusterStack --exclusively --require-approval never
 
       - name: Summary
         run: |
