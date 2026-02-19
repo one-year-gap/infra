@@ -14,8 +14,10 @@ on:
     secrets:
       CENTRAL_REPO_TOKEN:
         required: true
+
   repository_dispatch:
     types: [release-request]
+
   workflow_dispatch:
     inputs:
       source-repo:
@@ -48,7 +50,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: central-release-${{ github.event_name }}-${{ github.ref }}
+  group: central-release-tag-creation
   cancel-in-progress: false
 
 env:
@@ -56,7 +58,6 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-
   # Required CDK app envs
   REGION: ${{ secrets.AWS_REGION }}
   ADMIN_ALLOWED_CIDRS: ${{ secrets.ADMIN_ALLOWED_CIDRS }}
@@ -71,7 +72,6 @@ env:
   DOMAIN_INTERNAL_NAME: ${{ secrets.DOMAIN_INTERNAL_NAME }}
   CUSTOMER_CERT_ARN: ${{ secrets.CUSTOMER_CERT_ARN }}
   ADMIN_CERT_ARN: ${{ secrets.ADMIN_CERT_ARN }}
-
   # Source repos
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
@@ -98,7 +98,7 @@ jobs:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const releaseAllowed = ["release:major", "release:minor", "release:patch"];
-            const deployAllowed = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web"];
+            const deployAllowed  = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web"];
 
             function splitRepo(full) {
               const parts = String(full || "").trim().split("/");
@@ -121,16 +121,20 @@ jobs:
             let deployLabels = [];
 
             if (context.eventName === "workflow_dispatch") {
-              sourceRepo = process.env.IN_SOURCE_REPO;
-              sourceSha = process.env.IN_SOURCE_SHA;
+              sourceRepo   = process.env.IN_SOURCE_REPO;
+              sourceSha    = process.env.IN_SOURCE_SHA;
               releaseLabel = process.env.IN_RELEASE_LABEL;
               deployLabels = parseDeployLabels(process.env.IN_DEPLOY_LABELS);
+
             } else if (context.eventName === "workflow_call") {
               sourceRepo = process.env.IN_SOURCE_REPO;
-              sourceSha = process.env.IN_SOURCE_SHA;
+              sourceSha  = process.env.IN_SOURCE_SHA;
+              // workflow_call은 PR 라벨 자동 감지 경로로 진입하므로 sourceSha 필수
+
             } else if (context.eventName === "repository_dispatch") {
               sourceRepo = context.payload.client_payload?.source_repo;
-              sourceSha = context.payload.client_payload?.source_sha;
+              sourceSha  = context.payload.client_payload?.source_sha;
+
             } else {
               throw new Error(`unsupported event: ${context.eventName}`);
             }
@@ -157,9 +161,9 @@ jobs:
                 throw new Error(`No associated PR found for ${full}@${sourceSha}`);
               }
 
-              const labels = (pr.labels || []).map(l => l.name);
+              const labels  = (pr.labels || []).map(l => l.name);
               const release = labels.filter(l => releaseAllowed.includes(l));
-              const deploy = labels.filter(l => deployAllowed.includes(l));
+              const deploy  = labels.filter(l => deployAllowed.includes(l));
 
               if (release.length !== 1) {
                 throw new Error(`release label must be exactly one. found=${release.join(",") || "none"}`);
@@ -175,13 +179,11 @@ jobs:
             if (!releaseAllowed.includes(releaseLabel)) {
               throw new Error(`invalid release label: ${releaseLabel}`);
             }
-
             for (const label of deployLabels) {
               if (!deployAllowed.includes(label)) {
                 throw new Error(`invalid deploy label: ${label}`);
               }
             }
-
             if (deployLabels.includes("deploy:customer-web")) {
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
@@ -192,10 +194,10 @@ jobs:
 
             const releaseLevel = releaseLabel.replace("release:", "");
 
-            core.setOutput("source_repo", full);
-            core.setOutput("source_sha", sourceSha || "");
-            core.setOutput("release_label", releaseLabel);
-            core.setOutput("release_level", releaseLevel);
+            core.setOutput("source_repo",       full);
+            core.setOutput("source_sha",        sourceSha || "");
+            core.setOutput("release_label",     releaseLabel);
+            core.setOutput("release_level",     releaseLevel);
             core.setOutput("deploy_labels_json", JSON.stringify(deployLabels));
 
   create-tag:
@@ -203,7 +205,7 @@ jobs:
     needs: [resolve-context]
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
-      target_sha: ${{ steps.bump.outputs.target_sha }}
+      target_sha:  ${{ steps.bump.outputs.target_sha }}
     steps:
       - name: Checkout source repo
         uses: actions/checkout@v4
@@ -217,16 +219,23 @@ jobs:
         shell: bash
         env:
           RELEASE_LEVEL: ${{ needs.resolve-context.outputs.release_level }}
-          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          SOURCE_SHA:    ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
 
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           TARGET_SHA="$SOURCE_SHA"
           if [ -z "$TARGET_SHA" ]; then
             TARGET_SHA="$(git rev-parse HEAD)"
+          fi
+
+          
+          OBJECT_TYPE="$(git cat-file -t "$TARGET_SHA" 2>/dev/null || echo 'missing')"
+          if [ "$OBJECT_TYPE" != "commit" ]; then
+            echo "::error::TARGET_SHA=$TARGET_SHA is not a commit (type=$OBJECT_TYPE). Check that source-sha belongs to this repository." >&2
+            exit 1
           fi
 
           LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
@@ -238,15 +247,9 @@ jobs:
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
 
           case "$RELEASE_LEVEL" in
-            major)
-              MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1)); PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
             *)
               echo "Unsupported RELEASE_LEVEL=$RELEASE_LEVEL" >&2
               exit 1
@@ -256,7 +259,7 @@ jobs:
           NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
 
           if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
-            echo "Tag already exists: $NEXT_TAG" >&2
+            echo "::error::Tag already exists: $NEXT_TAG" >&2
             exit 1
           fi
 
@@ -273,24 +276,23 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
-          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
-          TARGET_SHA: ${{ needs.create-tag.outputs.target_sha }}
-          RELEASE_LABEL: ${{ needs.resolve-context.outputs.release_label }}
+          SOURCE_REPO:        ${{ needs.resolve-context.outputs.source_repo }}
+          VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
+          TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
+          RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
           DEPLOY_LABELS_JSON: ${{ needs.resolve-context.outputs.deploy_labels_json }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const [owner, repo] = process.env.SOURCE_REPO.split("/");
-            const tag = process.env.VERSION_TAG;
-            const targetSha = process.env.TARGET_SHA;
-            const releaseLabel = process.env.RELEASE_LABEL;
-            const deployLabels = JSON.parse(process.env.DEPLOY_LABELS_JSON || "[]");
+            const tag            = process.env.VERSION_TAG;
+            const targetSha      = process.env.TARGET_SHA;
+            const releaseLabel   = process.env.RELEASE_LABEL;
+            const deployLabels   = JSON.parse(process.env.DEPLOY_LABELS_JSON || "[]");
 
             try {
-              const existing = await github.rest.repos.getReleaseByTag({
-                owner, repo, tag
-              });
+              const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            
               core.notice(`Release already exists: ${existing.data.html_url}`);
               return;
             } catch (e) {
@@ -298,6 +300,7 @@ jobs:
             }
 
             const header = [
+              
               `release-label: ${releaseLabel}`,
               `deploy-labels: ${deployLabels.join(", ") || "none"}`
             ].join("\n");
@@ -305,15 +308,17 @@ jobs:
             const created = await github.rest.repos.createRelease({
               owner,
               repo,
-              tag_name: tag,
+              tag_name:         tag,
               target_commitish: targetSha,
-              name: `${tag}`,
-              body: header,
-              draft: false,
-              prerelease: false,
+              
+              name:             `${tag}`,
+              body:             header,
+              draft:            false,
+              prerelease:       false,
               generate_release_notes: true
             });
 
+        
             core.info(`Created release: ${created.data.html_url}`);
 
   build-and-push-api-server:
@@ -357,7 +362,6 @@ jobs:
             -t "${REPO}:customer-${VERSION_TAG}" \
             -t "${REPO}:customer-latest" \
             .
-
           docker push "${REPO}:customer-${VERSION_TAG}"
           docker push "${REPO}:customer-latest"
 
@@ -366,7 +370,6 @@ jobs:
             -t "${REPO}:admin-${VERSION_TAG}" \
             -t "${REPO}:admin-latest" \
             .
-
           docker push "${REPO}:admin-${VERSION_TAG}"
           docker push "${REPO}:admin-latest"
 
@@ -410,7 +413,6 @@ jobs:
             -t "${REPO}:${VERSION_TAG}" \
             -t "${REPO}:latest" \
             .
-
           docker push "${REPO}:${VERSION_TAG}"
           docker push "${REPO}:latest"
 
@@ -422,9 +424,11 @@ jobs:
       - create-github-release
       - build-and-push-api-server
       - build-and-push-admin-web
+
     if: |
       always() &&
       needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
       needs.create-github-release.result == 'success' &&
       (needs.build-and-push-api-server.result == 'success' || needs.build-and-push-api-server.result == 'skipped') &&
       (needs.build-and-push-admin-web.result == 'success' || needs.build-and-push-admin-web.result == 'skipped')

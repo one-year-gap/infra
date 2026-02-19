@@ -180,7 +180,8 @@ jobs:
               "📕 docs": "docs", "🧹 chore": "chore", "🔧 config": "config",
               "📦 deps": "deps", "🏗️ build": "build", "🚀 deploy": "deploy",
               "⚡ perf": "perf", "🧪 spike": "spike", "🔄 rename": "rename",
-              "🗑️ remove": "remove", "🔖 init": "init"
+              "🗑️ remove": "remove", "🔖 init": "init", "🏷️ release": "release",
+              "🛡️ security": "security"
             };
             
             const prefix = typeMap[TYPE_LABEL] || "task";
