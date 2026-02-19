@@ -135,6 +135,12 @@ jobs:
         with:
           node-version: 20
 
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Activate pnpm
+        run: corepack prepare pnpm@10 --activate
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
