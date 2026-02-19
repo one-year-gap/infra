@@ -119,6 +119,7 @@ jobs:
             let sourceSha;
             let releaseLabel;
             let deployLabels = [];
+            const centralRepo = `${context.repo.owner}/${context.repo.repo}`;
 
             if (context.eventName === "workflow_dispatch") {
               sourceRepo   = process.env.IN_SOURCE_REPO;
@@ -139,7 +140,51 @@ jobs:
               throw new Error(`unsupported event: ${context.eventName}`);
             }
 
-            const { owner, repo, full } = splitRepo(sourceRepo);
+            sourceRepo = String(sourceRepo || "").trim();
+            sourceSha = sourceSha ? String(sourceSha).trim() : "";
+
+            if (!sourceRepo) {
+              throw new Error("source-repo is empty in event payload/input");
+            }
+
+            let { owner, repo, full } = splitRepo(sourceRepo);
+
+            if (sourceSha) {
+              const candidateRepos = Array.from(new Set([
+                full,
+                process.env.API_SERVER_SOURCE_REPO,
+                process.env.ADMIN_WEB_SOURCE_REPO
+              ].filter(Boolean).map(v => String(v).trim())));
+
+              let matchedRepo = null;
+              for (const candidate of candidateRepos) {
+                const c = splitRepo(candidate);
+                try {
+                  await github.rest.repos.getCommit({
+                    owner: c.owner,
+                    repo: c.repo,
+                    ref: sourceSha
+                  });
+                  matchedRepo = c.full;
+                  break;
+                } catch (e) {
+                  if (e.status !== 404 && e.status !== 422) throw e;
+                }
+              }
+
+              if (!matchedRepo) {
+                throw new Error(`source-sha not found. source_sha=${sourceSha}, candidates=${candidateRepos.join(",")}`);
+              }
+
+              if (matchedRepo !== full) {
+                core.notice(`source_repo corrected by SHA lookup: ${full} -> ${matchedRepo}`);
+                ({ owner, repo, full } = splitRepo(matchedRepo));
+              }
+            }
+
+            if (context.eventName === "repository_dispatch" && full === centralRepo) {
+              core.warning(`source_repo resolved to central repo(${centralRepo}). Verify sender dispatch payload.`);
+            }
 
             if (!releaseLabel || deployLabels.length === 0) {
               if (!sourceSha) {
@@ -186,10 +231,6 @@ jobs:
             }
             if (deployLabels.includes("deploy:customer-web")) {
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
-            }
-
-            if (sourceSha) {
-              sourceSha = String(sourceSha).trim();
             }
 
             const releaseLevel = releaseLabel.replace("release:", "");
