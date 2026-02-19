@@ -110,7 +110,8 @@ jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
-      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      source_owner: ${{ steps.resolve.outputs.source_owner }}
+      source_name: ${{ steps.resolve.outputs.source_name }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
@@ -265,7 +266,8 @@ jobs:
 
             const releaseLevel = releaseLabel.replace("release:", "");
 
-            core.setOutput("source_repo",       full);
+            core.setOutput("source_owner",      owner);
+            core.setOutput("source_name",       repo);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
@@ -274,7 +276,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_owner != '' && needs.resolve-context.outputs.source_name != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -282,14 +284,16 @@ jobs:
       - name: Guard required outputs
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [ -z "${SOURCE_REPO}" ]; then
-            echo "::error::resolve-context output source_repo is empty. Aborting to prevent checkout fallback to current repo."
+          if [ -z "${SOURCE_OWNER}" ] || [ -z "${SOURCE_NAME}" ]; then
+            echo "::error::resolve-context outputs source_owner/source_name are empty. Aborting to prevent checkout fallback to current repo."
             exit 1
           fi
+          SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
           echo "resolved-source-repo=$SOURCE_REPO"
           echo "resolved-source-sha=${SOURCE_SHA:-<empty>}"
 
@@ -297,7 +301,7 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ needs.resolve-context.outputs.source_repo }}
+          repository: ${{ format('{0}/{1}', needs.resolve-context.outputs.source_owner, needs.resolve-context.outputs.source_name) }}
           ref: ${{ needs.resolve-context.outputs.source_sha }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
@@ -306,17 +310,19 @@ jobs:
         if: needs.resolve-context.outputs.source_sha == ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ needs.resolve-context.outputs.source_repo }}
+          repository: ${{ format('{0}/{1}', needs.resolve-context.outputs.source_owner, needs.resolve-context.outputs.source_name) }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Validate source context
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
+          SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
           echo "source-repo=$SOURCE_REPO"
           echo "source-sha=${SOURCE_SHA:-<empty>}"
           if [ -n "${SOURCE_SHA}" ]; then
@@ -388,7 +394,8 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO:        ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_OWNER:       ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME:        ${{ needs.resolve-context.outputs.source_name }}
           VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
@@ -396,7 +403,8 @@ jobs:
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
-            const [owner, repo] = process.env.SOURCE_REPO.split("/");
+            const owner          = process.env.SOURCE_OWNER;
+            const repo           = process.env.SOURCE_NAME;
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
             const releaseLabel   = process.env.RELEASE_LABEL;
@@ -442,11 +450,13 @@ jobs:
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "$SOURCE_REPO" == *"/api-server"* ]]; then
+          if [[ "$SOURCE_NAME" == "api-server" ]]; then
+            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -460,7 +470,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is api-server
-        if: contains(needs.resolve-context.outputs.source_repo, '/api-server') && needs.resolve-context.outputs.source_sha != ''
+        if: needs.resolve-context.outputs.source_name == 'api-server' && needs.resolve-context.outputs.source_sha != ''
         run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
 
       - name: Configure AWS credentials
@@ -508,11 +518,13 @@ jobs:
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "$SOURCE_REPO" == *"/admin-fe"* ]]; then
+          if [[ "$SOURCE_NAME" == "admin-fe" ]]; then
+            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -526,7 +538,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is admin-web
-        if: contains(needs.resolve-context.outputs.source_repo, '/admin-fe') && needs.resolve-context.outputs.source_sha != ''
+        if: needs.resolve-context.outputs.source_name == 'admin-fe' && needs.resolve-context.outputs.source_sha != ''
         run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
 
       - name: Configure AWS credentials
