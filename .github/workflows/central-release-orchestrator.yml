@@ -496,18 +496,14 @@ jobs:
           docker build --platform linux/amd64 \
             --build-arg PROFILE=customer \
             -t "${REPO}:customer-${VERSION_TAG}" \
-            -t "${REPO}:customer-latest" \
             .
           docker push "${REPO}:customer-${VERSION_TAG}"
-          docker push "${REPO}:customer-latest"
 
           docker build --platform linux/amd64 \
             --build-arg PROFILE=admin \
             -t "${REPO}:admin-${VERSION_TAG}" \
-            -t "${REPO}:admin-latest" \
             .
           docker push "${REPO}:admin-${VERSION_TAG}"
-          docker push "${REPO}:admin-latest"
 
   build-and-push-admin-web:
     runs-on: ubuntu-latest
@@ -563,10 +559,8 @@ jobs:
 
           docker build --platform linux/amd64 \
             -t "${REPO}:${VERSION_TAG}" \
-            -t "${REPO}:latest" \
             .
           docker push "${REPO}:${VERSION_TAG}"
-          docker push "${REPO}:latest"
 
   deploy-ecs:
     runs-on: ubuntu-latest
@@ -613,14 +607,18 @@ jobs:
         working-directory: infrastructure
         env:
           DEPLOY_MODE: ecs
-          ADMIN_API_IMAGE_TAG: admin-latest
-          CUSTOMER_API_IMAGE_TAG: customer-latest
-          ADMIN_WEB_IMAGE_TAG: latest
+          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
         run: |
           set -euo pipefail
+          export ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
+          export CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
+          export ADMIN_WEB_IMAGE_TAG="${RELEASE_TAG}"
           cdk deploy EcsClusterStack --require-approval never
 
       - name: Summary
         run: |
           echo "release=${{ needs.create-tag.outputs.version_tag }}"
           echo "deploy_labels=${{ needs.resolve-context.outputs.deploy_labels_json }}"
+          echo "admin_api_image_tag=admin-${{ needs.create-tag.outputs.version_tag }}"
+          echo "customer_api_image_tag=customer-${{ needs.create-tag.outputs.version_tag }}"
+          echo "admin_web_image_tag=${{ needs.create-tag.outputs.version_tag }}"
