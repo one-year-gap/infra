@@ -44,6 +44,22 @@ on:
         required: true
       ADMIN_CERT_ARN:
         required: true
+      ADMIN_API_RUNTIME_SECRET_ARN:
+        required: false
+      CUSTOMER_API_RUNTIME_SECRET_ARN:
+        required: false
+      ADMIN_API_SECRETS_MANAGER_ARNS:
+        required: false
+      CUSTOMER_API_SECRETS_MANAGER_ARNS:
+        required: false
+      ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARN:
+        required: false
+      CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN:
+        required: false
+      ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS:
+        required: false
+      CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS:
+        required: false
 
   repository_dispatch:
     types: [release-request]
@@ -102,6 +118,14 @@ env:
   DOMAIN_INTERNAL_NAME: ${{ secrets.DOMAIN_INTERNAL_NAME }}
   CUSTOMER_CERT_ARN: ${{ secrets.CUSTOMER_CERT_ARN }}
   ADMIN_CERT_ARN: ${{ secrets.ADMIN_CERT_ARN }}
+  ADMIN_API_RUNTIME_SECRET_ARN: ${{ secrets.ADMIN_API_RUNTIME_SECRET_ARN }}
+  CUSTOMER_API_RUNTIME_SECRET_ARN: ${{ secrets.CUSTOMER_API_RUNTIME_SECRET_ARN }}
+  ADMIN_API_SECRETS_MANAGER_ARNS: ${{ secrets.ADMIN_API_SECRETS_MANAGER_ARNS }}
+  CUSTOMER_API_SECRETS_MANAGER_ARNS: ${{ secrets.CUSTOMER_API_SECRETS_MANAGER_ARNS }}
+  ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARN: ${{ secrets.ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARN }}
+  CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN: ${{ secrets.CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN }}
+  ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS: ${{ secrets.ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS }}
+  CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS: ${{ secrets.CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS }}
   # Source repos
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe

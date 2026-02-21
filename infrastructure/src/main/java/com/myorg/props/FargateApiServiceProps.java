@@ -4,10 +4,13 @@ import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.ecs.Cluster;
+import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.amazon.awscdk.services.servicediscovery.INamespace;
 import software.constructs.Construct;
+
+import java.util.List;
 
 public record FargateApiServiceProps(
         Construct scope,
@@ -33,6 +36,10 @@ public record FargateApiServiceProps(
 
         //Cloud Map
         INamespace cloudMapNamespace,
-        String cloudMapServiceName
+        String cloudMapServiceName,
+
+        List<String> secretsManagerArns, //Secrets Manager ARN
+        List<PolicyStatement> extraExecutionPolicies, //ExecutionRole 권한
+        List<PolicyStatement> extraTaskPolicies //TaskRole 추가 권한
 ) {
 }

@@ -14,12 +14,16 @@ import software.amazon.awscdk.services.ec2.SubnetType;
 import software.amazon.awscdk.services.ec2.Vpc;
 import software.amazon.awscdk.services.ecr.Repository;
 import software.amazon.awscdk.services.ecs.Cluster;
+import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
 import software.amazon.awscdk.services.rds.DatabaseInstance;
 import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.amazon.awscdk.services.servicediscovery.PrivateDnsNamespace;
 import software.constructs.Construct;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class EcsClusterStack extends Stack {
     private final Cluster cluster;
@@ -125,6 +129,22 @@ public class EcsClusterStack extends Stack {
                 rds.getDbInstanceEndpointPort(),
                 DATABASE_NAME
         );
+        List<String> adminApiSecretsManagerArns = resolveArns(
+                "ADMIN_API_RUNTIME_SECRET_ARN",
+                "ADMIN_API_SECRETS_MANAGER_ARNS"
+        );
+        List<String> customerApiSecretsManagerArns = resolveArns(
+                "CUSTOMER_API_RUNTIME_SECRET_ARN",
+                "CUSTOMER_API_SECRETS_MANAGER_ARNS"
+        );
+        List<PolicyStatement> adminApiExtraTaskPolicies = resolveKmsDecryptPolicies(
+                "ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARN",
+                "ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS"
+        );
+        List<PolicyStatement> customerApiExtraTaskPolicies = resolveKmsDecryptPolicies(
+                "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN",
+                "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS"
+        );
 
         /**
          * Props Setup
@@ -160,7 +180,10 @@ public class EcsClusterStack extends Stack {
                 dbUrl,
                 dbSecret,
                 serviceNs,
-                ADMIN_CLOUD_MAP_NAME
+                ADMIN_CLOUD_MAP_NAME,
+                adminApiSecretsManagerArns,
+                List.of(),
+                adminApiExtraTaskPolicies
         );
 
         FargateApiServiceProps customerApiServiceProps = new FargateApiServiceProps(
@@ -180,7 +203,10 @@ public class EcsClusterStack extends Stack {
                 dbUrl,
                 dbSecret,
                 null,
-                null
+                null,
+                customerApiSecretsManagerArns,
+                List.of(),
+                customerApiExtraTaskPolicies
         );
 
         /**
@@ -217,6 +243,43 @@ public class EcsClusterStack extends Stack {
 
     public FargateApiService getAdminApiService() {
         return adminApiService;
+    }
+
+    private List<String> resolveArns(String singleArnEnvKey, String csvArnEnvKey) {
+        List<String> arns = new ArrayList<>();
+        addIfPresent(arns, AppConfig.getOptionalValueOrDefault(singleArnEnvKey, ""));
+
+        String csv = AppConfig.getOptionalValueOrDefault(csvArnEnvKey, "");
+        if (!csv.isBlank()) {
+            for (String arn : csv.split(",")) {
+                addIfPresent(arns, arn);
+            }
+        }
+        return arns;
+    }
+
+    private void addIfPresent(List<String> target, String value) {
+        if (value == null) {
+            return;
+        }
+        String trimmed = value.trim();
+        if (!trimmed.isEmpty() && !target.contains(trimmed)) {
+            target.add(trimmed);
+        }
+    }
+
+    private List<PolicyStatement> resolveKmsDecryptPolicies(String singleArnEnvKey, String csvArnEnvKey) {
+        List<String> kmsKeyArns = resolveArns(singleArnEnvKey, csvArnEnvKey);
+        if (kmsKeyArns.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(
+                PolicyStatement.Builder.create()
+                        .actions(List.of("kms:Decrypt"))
+                        .resources(kmsKeyArns)
+                        .build()
+        );
     }
 
 }

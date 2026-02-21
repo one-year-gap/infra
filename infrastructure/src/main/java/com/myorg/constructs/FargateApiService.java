@@ -12,7 +12,6 @@ import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.logs.LogGroup;
-import software.amazon.awscdk.services.secretsmanager.Secret;
 import software.constructs.Construct;
 
 import java.util.List;
@@ -74,14 +73,19 @@ public class FargateApiService extends Construct {
     ) {
         super(props.scope(), props.id());
 
+        Role taskRole = props.enableEcsExec()
+                ? createTaskRoleWithExec(TASK_ROLE, props.extraTaskPolicies())
+                : createBasicTaskRole(TASK_ROLE, props.extraTaskPolicies());
+        addSecretsManagerReadPolicy(taskRole, props.secretsManagerArns());
+
         /**
          * 1) TaskDefinition 생성
          */
         this.taskDefinition = FargateTaskDefinition.Builder.create(this, TASK_DEFINITION)
                 .cpu(SERVER_CPU)
                 .memoryLimitMiB(SERVER_MEMORY)
-                .executionRole(createExecutionRole(EXECUTION_ROLE))
-                .taskRole(props.enableEcsExec() ? createTaskRoleWithExec(TASK_ROLE) : createBasicTaskRole(TASK_ROLE))
+                .executionRole(createExecutionRole(EXECUTION_ROLE, props.extraExecutionPolicies()))
+                .taskRole(taskRole)
                 .build();
 
         //secret 주입 - executionRole에 read 권한 부여
@@ -139,7 +143,7 @@ public class FargateApiService extends Construct {
         //Cloud Map 설정이 있으면
         if (props.cloudMapNamespace() != null
             && props.cloudMapServiceName() != null
-            && !props.cloudMapServiceName().isBlank()){
+            && !props.cloudMapServiceName().isBlank()) {
             serviceBuilder.cloudMapOptions(CloudMapOptions.builder()
                     .cloudMapNamespace(props.cloudMapNamespace())
                     .name(props.cloudMapServiceName())
@@ -152,29 +156,33 @@ public class FargateApiService extends Construct {
     /**
      * Execution Role: ECS/Fargate 런타임이 Task 시작 시 필요 권한
      */
-    private Role createExecutionRole(String id) {
-        return Role.Builder.create(this, id)
+    private Role createExecutionRole(String id, List<PolicyStatement> extraPolicies) {
+        Role role = Role.Builder.create(this, id)
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
                 .managedPolicies(List.of(
                         ManagedPolicy.fromAwsManagedPolicyName("service-role/AmazonECSTaskExecutionRolePolicy")
                 ))
                 .build();
+        addExtraPolicies(role, extraPolicies);
+        return role;
     }
 
     /**
      * Basic Task Role: service가 AWS 호출시 필요 권한
      */
-    private Role createBasicTaskRole(String id) {
-        return Role.Builder.create(this, id)
+    private Role createBasicTaskRole(String id, List<PolicyStatement> extraPolicies) {
+        Role role = Role.Builder.create(this, id)
                 .assumedBy(new ServicePrincipal("ecs-tasks.amazonaws.com"))
                 .build();
+        addExtraPolicies(role, extraPolicies);
+        return role;
     }
 
     /*
      * Task Role with ECS Exec
      */
-    private Role createTaskRoleWithExec(String id) {
-        Role role = createBasicTaskRole(id);
+    private Role createTaskRoleWithExec(String id, List<PolicyStatement> extraPolicies) {
+        Role role = createBasicTaskRole(id, extraPolicies);
 
         role.addToPolicy(PolicyStatement.Builder.create()
                 .actions(List.of(
@@ -187,6 +195,27 @@ public class FargateApiService extends Construct {
                 .build());
 
         return role;
+    }
+
+    private void addSecretsManagerReadPolicy(Role role, List<String> secretsManagerArns) {
+        if (secretsManagerArns == null || secretsManagerArns.isEmpty()) {
+            return;
+        }
+
+        role.addToPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "secretsmanager:GetSecretValue",
+                        "secretsmanager:DescribeSecret"
+                ))
+                .resources(secretsManagerArns)
+                .build());
+    }
+
+    private void addExtraPolicies(Role role, List<PolicyStatement> extraPolicies) {
+        if (extraPolicies == null || extraPolicies.isEmpty()) {
+            return;
+        }
+        extraPolicies.forEach(role::addToPolicy);
     }
 
     /**
