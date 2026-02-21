@@ -69,6 +69,9 @@ class FargateApiServiceTest {
                 "jdbc:postgresql://example.com:5432/holliverse",
                 dbSecret,
                 null,
+                null,
+                null,
+                null,
                 null
         );
 
@@ -149,7 +152,10 @@ class FargateApiServiceTest {
                 "jdbc:postgresql://example.com:5432/holliverse",
                 dbSecret,
                 ns,
-                "admin-api"
+                "admin-api",
+                null,
+                null,
+                null
         );
 
         new FargateApiService(props);
