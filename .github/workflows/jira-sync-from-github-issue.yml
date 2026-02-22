@@ -117,6 +117,7 @@ jobs:
             "Admin Team") TEAM_ID="31fa7d97-fd21-4428-a7b1-ce4b849a19c7" ;;
             "Infra Team") TEAM_ID="b8a5960c-ab7e-4f66-a48b-9fe9fe4d1a31" ;;
             "Auth Team") TEAM_ID="84b2225f-0e11-410b-b416-672cc2e7b3f2" ;;
+            "Database Team") TEAM_ID="40274ed3-5edc-4726-9aee-fd3012ca1868" ;;
             *) TEAM_ID="null" ;;
           esac
           
