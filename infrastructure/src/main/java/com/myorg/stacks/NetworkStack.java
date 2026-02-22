@@ -1,6 +1,7 @@
 package com.myorg.stacks;
 
 import com.myorg.config.NetworkStackConfig;
+import com.myorg.constants.NetworkConstants;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.services.ec2.*;
@@ -34,20 +35,20 @@ public class NetworkStack extends Stack {
          * =================================================================
          */
         this.vpc = Vpc.Builder.create(this, "AppVpc")
-                .maxAzs(2)//가용영역
-                .natGateways(1)
+                .maxAzs(NetworkConstants.MAX_AZ)//가용영역
+                .natGateways(NetworkConstants.NAT_GATEWAYS)
                 .subnetConfiguration(Arrays.asList(
                         SubnetConfiguration
                                 .builder()
-                                .name("Public")
+                                .name(NetworkConstants.SUBNET_PUBLIC)
                                 .subnetType(SubnetType.PUBLIC)
-                                .cidrMask(24)
+                                .cidrMask(NetworkConstants.CIDR_MASK)
                                 .build(),
                         SubnetConfiguration
                                 .builder()
-                                .name("Private")
+                                .name(NetworkConstants.SUBNET_PRIVATE)
                                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
-                                .cidrMask(24)
+                                .cidrMask(NetworkConstants.CIDR_MASK)
                                 .build()
                 )).build();
 
@@ -105,8 +106,8 @@ public class NetworkStack extends Stack {
          *                   Customer Rules
          * =================================================================
          */
-        customerAlbSg.addIngressRule(Peer.anyIpv4(), Port.tcp(80), "HTTP");
-        customerAlbSg.addIngressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS");
+        customerAlbSg.addIngressRule(Peer.anyIpv4(), NetworkConstants.HTTP, "HTTP");
+        customerAlbSg.addIngressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
 
         //ALB -> Customer API only
         customerAlbSg.addEgressRule(
@@ -121,18 +122,18 @@ public class NetworkStack extends Stack {
                 "From customer ALB only"
         );
 
-        customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS out");
-        customerApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
-        customerApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        customerApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS out");
+        customerApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        customerApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
         customerApiSg.addEgressRule(
                 Peer.securityGroupId(dbSg.getSecurityGroupId()),
-                Port.tcp(5432),
+                NetworkConstants.POSTGRES,
                 "To DB only"
         );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
-                Port.tcp(5432),
+                NetworkConstants.POSTGRES,
                 "Customer API to DB"
         );
 
@@ -143,8 +144,8 @@ public class NetworkStack extends Stack {
          * =================================================================
          */
         allowedIpList.forEach(ip -> {
-            adminAlbSg.addIngressRule(Peer.ipv4(ip), Port.tcp(80), "Admin HTTP from allowed IP");
-            adminAlbSg.addIngressRule(Peer.ipv4(ip), Port.tcp(443), "Admin HTTPS from allowed IP");
+            adminAlbSg.addIngressRule(Peer.ipv4(ip), NetworkConstants.HTTP, "Admin HTTP from allowed IP");
+            adminAlbSg.addIngressRule(Peer.ipv4(ip), NetworkConstants.HTTPS, "Admin HTTPS from allowed IP");
         });
 
 
@@ -156,9 +157,9 @@ public class NetworkStack extends Stack {
         adminWebSg.addIngressRule(
                 Peer.securityGroupId(adminAlbSg.getSecurityGroupId()),
                 Port.tcp(adminWebPort), "From Admin ALB");
-        adminWebSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS");
-        adminWebSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
-        adminWebSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        adminWebSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        adminWebSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        adminWebSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
 
         //ALB -> Admin Web only
         adminAlbSg.addEgressRule(
@@ -181,18 +182,18 @@ public class NetworkStack extends Stack {
         );
 
 
-        adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(443), "HTTPS");
-        adminApiSg.addEgressRule(Peer.anyIpv4(), Port.tcp(53), "DNS");
-        adminApiSg.addEgressRule(Peer.anyIpv4(), Port.udp(53), "DNS(UDP)");
+        adminApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        adminApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        adminApiSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
         adminApiSg.addEgressRule(
                 Peer.securityGroupId(dbSg.getSecurityGroupId()),
-                Port.tcp(5432),
+                NetworkConstants.POSTGRES,
                 "To DB only"
         );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
-                Port.tcp(5432),
+                NetworkConstants.POSTGRES,
                 "Admin API to DB"
         );
     }

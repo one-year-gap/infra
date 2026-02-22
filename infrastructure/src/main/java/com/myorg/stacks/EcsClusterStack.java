@@ -57,6 +57,7 @@ public class EcsClusterStack extends Stack {
     private static final String PROFILE_CUSTOMER = "customer";
     private static final String DOMAIN_NAME_SPACE = "ServiceNs";
     private static final String ADMIN_CLOUD_MAP_NAME="admin-api";
+    private static final String CUSTOMER_CLOUD_MAP_NAME="customer-api";
 
     /**
      * DB 상수
@@ -202,8 +203,8 @@ public class EcsClusterStack extends Stack {
                 PROFILE_CUSTOMER,
                 dbUrl,
                 dbSecret,
-                null,
-                null,
+                serviceNs,
+                CUSTOMER_CLOUD_MAP_NAME,
                 customerApiSecretsManagerArns,
                 List.of(),
                 customerApiExtraTaskPolicies

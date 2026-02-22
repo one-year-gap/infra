@@ -96,6 +96,21 @@ public final class AppConfig {
         return value != null ? value : defaultValue;
     }
 
+    /*
+    * =================================================================
+    *                              Grafana
+    * =================================================================
+    */
+    public static String getMonitoringInstanceType(){
+        return getOptionalValue("MONITORING_INSTANCE_TYPE");
+    }
+
+    /*
+    * =================================================================
+    *                            편의 메서드
+    * =================================================================
+    */
+
     private static String getOptionalValue(String key) {
         String value = System.getenv(key);
         if (value != null && !value.isBlank()) {

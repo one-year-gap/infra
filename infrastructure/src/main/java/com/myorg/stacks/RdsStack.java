@@ -12,11 +12,15 @@ import software.amazon.awscdk.services.secretsmanager.SecretStringGenerator;
 import software.constructs.Construct;
 
 import java.util.List;
+import java.util.Map;
 
 public class RdsStack extends Stack {
     private final Secret dbSecret;
     private final DatabaseInstance rds;
     private final SecurityGroup dbSg;
+
+    private static final String DB_NAME = "holliverse";
+    private static final int DB_PORT = 5432;
 
     public RdsStack(Construct scope, String id, StackProps props, Vpc vpc, SecurityGroup dbSg) {
         super(scope, id, props);
@@ -38,15 +42,30 @@ public class RdsStack extends Stack {
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
                 .build();
 
+        IInstanceEngine postgresEngine = DatabaseInstanceEngine.postgres(
+                PostgresInstanceEngineProps.builder()
+                        .version(PostgresEngineVersion.VER_16)
+                        .build()
+        );
+
+        ParameterGroup postgresParameterGroup = ParameterGroup.Builder.create(this, "HolliversePostgresParameterGroup")
+                .engine(postgresEngine)
+                .description("PostgreSQL settings for slow query analysis with pg_stat_statements")
+                .parameters(Map.of(
+                        "shared_preload_libraries", "pg_stat_statements",
+                        "pg_stat_statements.track", "all"
+                ))
+                .build();
+
         this.rds = DatabaseInstance.Builder.create(this, "HolliversePostgres")
-                .engine(DatabaseInstanceEngine.postgres(PostgresInstanceEngineProps.builder()
-                        .version(PostgresEngineVersion.VER_16).build()))
+                .engine(postgresEngine)
                 .vpc(vpc)
                 .vpcSubnets(dbSubnets)
                 .securityGroups(List.of(dbSg))
                 .credentials(Credentials.fromSecret(dbSecret))
-                .databaseName("holliverse")
-                .port(5432)
+                .databaseName(DB_NAME)
+                .port(DB_PORT)
+                .parameterGroup(postgresParameterGroup)
                 .instanceType(InstanceType.of(InstanceClass.T4G, InstanceSize.MICRO)) //t4g.micro model
                 .allocatedStorage(20)//storage 20GB
                 .maxAllocatedStorage(20)

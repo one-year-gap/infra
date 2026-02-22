@@ -1,6 +1,7 @@
 package com.myorg;
 
 import com.myorg.config.AppConfig;
+import com.myorg.config.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
@@ -9,6 +10,7 @@ import com.myorg.stacks.AlbStack;
 import com.myorg.stacks.DnsStack;
 import com.myorg.stacks.EcrStack;
 import com.myorg.stacks.EcsClusterStack;
+import com.myorg.stacks.MonitoringStack;
 import com.myorg.stacks.NetworkStack;
 import com.myorg.stacks.RdsStack;
 import com.myorg.stacks.Route53Stack;
@@ -29,6 +31,7 @@ public class InfrastructureApp {
     private static final String ECS_CLUSTER_STACK_ID = "EcsClusterStack";
     private static final String ALB_STACK_ID = "AlbStack";
     private static final String DNS_STACK_ID = "DnsStack";
+    private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
     private static final String DEFAULT_DEPLOY_MODE = "route53";
 
@@ -39,6 +42,7 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_ECS = "ecs";
     private static final String DEPLOY_MODE_ALB = "alb";
     private static final String DEPLOY_MODE_DNS = "dns";
+    private static final String DEPLOY_MODE_MONITORING = "monitoring";
     private static final String DEPLOY_MODE_FULL = "full";
 
     /**
@@ -55,6 +59,7 @@ public class InfrastructureApp {
             case DEPLOY_MODE_RDS -> deployRds(deploymentContext);
             case DEPLOY_MODE_ECS -> deployEcs(deploymentContext);
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
+            case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
             default -> throw new IllegalArgumentException("지원하지 않는 deployMode : "
                     + deploymentContext.deployMode());
@@ -107,6 +112,25 @@ public class InfrastructureApp {
         BaseStacks baseStacks = createBaseStacks(context);
         EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+    }
+
+    /**
+     * 네트워크 + 모니터링(Grafana) 스택 배포
+     */
+    private static void deployMonitoring(DeploymentContext context) {
+        NetworkStack networkStack = createNetworkStack(context);
+        new MonitoringStack(
+                context.app(),
+                MONITORING_STACK_ID,
+                context.stackProps(),
+                networkStack.getVpc(),
+                networkStack.getDbSg(),
+                networkStack.getAdminApiSg(),
+                networkStack.getCustomerApiSg(),
+                PortConfig.getAdminServerPort(),
+                PortConfig.getCustomerServerPort(),
+                MonitoringConfig.fromEnv()
+        );
     }
 
     /**
