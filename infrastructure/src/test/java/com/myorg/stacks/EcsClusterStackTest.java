@@ -109,7 +109,7 @@ class EcsClusterStackTest {
         assertEquals(3, taskDefinitions.size());
         assertEquals(3, services.size());
         assertEquals(1, namespaces.size());
-        assertEquals(1, sdServices.size());
+        assertEquals(2, sdServices.size());
 
         assertEquals(2, countServicesByExecOption(services, true));
         assertEquals(1, countServicesByExecOption(services, false));
@@ -125,6 +125,9 @@ class EcsClusterStackTest {
         ));
         template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
                 "Name", "admin-api"
+        ));
+        template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
+                "Name", "customer-api"
         ));
     }
 
