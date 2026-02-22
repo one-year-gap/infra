@@ -49,11 +49,13 @@ class RdsStackTest {
 
         //when
         Map<String, Map<String, Object>> dbInstances = template.findResources("AWS::RDS::DBInstance");
+        Map<String, Map<String, Object>> dbParameterGroups = template.findResources("AWS::RDS::DBParameterGroup");
         Map<String, Map<String, Object>> secrets = template.findResources("AWS::SecretsManager::Secret");
         Map<String, Map<String, Object>> securityGroups = template.findResources("AWS::EC2::SecurityGroup");
 
         //then
         assertEquals(1, dbInstances.size());
+        assertEquals(1, dbParameterGroups.size());
         assertEquals(1, secrets.size());
         assertEquals(0, securityGroups.size());
 
@@ -63,6 +65,9 @@ class RdsStackTest {
         ));
         template.hasResourceProperties("AWS::SecretsManager::Secret", Map.of(
                 "Name", "holliverse/rds/postgres"
+        ));
+        template.hasResourceProperties("AWS::RDS::DBParameterGroup", Map.of(
+                "Family", "postgres16"
         ));
     }
 }
