@@ -90,7 +90,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
+      - name: Create DB roles for Flyway migration
+        run: |
+          psql -h localhost -U ${{ inputs['db-user'] }} -d ${{ inputs['db-name'] }} \
+            -c "CREATE ROLE IF NOT EXISTS app_admin;" \
+            -c "CREATE ROLE IF NOT EXISTS db_migrator;"
+        env:
+          PGPASSWORD: ${{ inputs['db-password'] }}
+          
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
