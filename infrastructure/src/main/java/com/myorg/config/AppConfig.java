@@ -53,7 +53,7 @@ public final class AppConfig {
     /**
      * domain internal 주소
      */
-    public static String getInternalDomainName(){
+    public static String getInternalDomainName() {
         return getRequiredValue("DOMAIN_INTERNAL_NAME");
     }
 
@@ -96,20 +96,34 @@ public final class AppConfig {
         return value != null ? value : defaultValue;
     }
 
+    /**
+     * EFS를 붙일 대상 VPC ID
+     */
+    public static String getEfsTargetVpcId() {
+        return getRequiredValue("EFS_TARGET_VPC_ID");
+    }
+
+    /**
+     * Monitoring EC2가 속한 Security Group ID
+     */
+    public static String getMonitoringSecurityGroupId() {
+        return getRequiredValue("MONITORING_SECURITY_GROUP_ID");
+    }
+
     /*
-    * =================================================================
-    *                              Grafana
-    * =================================================================
-    */
-    public static String getMonitoringInstanceType(){
+     * =================================================================
+     *                              Grafana
+     * =================================================================
+     */
+    public static String getMonitoringInstanceType() {
         return getOptionalValue("MONITORING_INSTANCE_TYPE");
     }
 
     /*
-    * =================================================================
-    *                            편의 메서드
-    * =================================================================
-    */
+     * =================================================================
+     *                            편의 메서드
+     * =================================================================
+     */
 
     private static String getOptionalValue(String key) {
         String value = System.getenv(key);
