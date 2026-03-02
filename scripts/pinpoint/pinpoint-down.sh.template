@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# =======================================================
+# pinpoint-down.sh
+# Pinpoint 종료
+# =======================================================
+
+set -euo pipefail
+
+PINPOINT_DIR="__PINPOINTREPODIR__"
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then docker compose "$@"; return; fi
+  if command -v docker-compose >/dev/null 2>&1; then docker-compose "$@"; return; fi
+  echo "docker compose command not found" >&2
+  exit 1
+}
+if [ -d "$PINPOINT_DIR" ]; then
+  cd "$PINPOINT_DIR"
+  compose_cmd down
+fi

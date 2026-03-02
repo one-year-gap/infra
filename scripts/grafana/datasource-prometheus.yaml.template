@@ -1,0 +1,10 @@
+# Grafana datasource provisioning 버전.
+apiVersion: 1
+# 자동 등록할 datasource 목록.
+datasources:
+  # 로컬 Prometheus datasource.
+  - name: prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:__PROMETHEUSPORT__
+    editable: true

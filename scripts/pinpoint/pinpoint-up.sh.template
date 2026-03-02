@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# =======================================================
+# pinpoint-up.sh.template
+# Pinpoint APM을 Docker Compose 구동
+# =======================================================
+
+set -euo pipefail
+# Pinpoint 저장소/버전/체크아웃 대상
+PINPOINT_REPO_URL="__PINPOINTREPOURL__"
+PINPOINT_DIR="__PINPOINTREPODIR__"
+PINPOINT_VERSION="__PINPOINTVERSION__"
+PINPOINT_GIT_REF="__PINPOINTGITREF__"
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then docker compose "$@"; return; fi
+  if command -v docker-compose >/dev/null 2>&1; then docker-compose "$@"; return; fi
+  echo "docker compose command not found" >&2
+  exit 1
+}
+
+# ------------------------ Repo 준비 ------------------------
+if [ ! -d "$PINPOINT_DIR/.git" ]; then
+  rm -rf "$PINPOINT_DIR"
+  git clone "$PINPOINT_REPO_URL" "$PINPOINT_DIR"
+fi
+
+#  ------------------------ 버전 고정 ------------------------
+# 저장소 디렉터리로 이동
+cd "$PINPOINT_DIR"
+if [ -n "$PINPOINT_GIT_REF" ]; then
+  git fetch --all --tags --force
+  git checkout "$PINPOINT_GIT_REF"
+else
+  git pull --ff-only || true
+fi
+if [ -f .env ]; then
+  sed -i -E "s/^PINPOINT_VERSION=.*/PINPOINT_VERSION=${PINPOINT_VERSION}/" .env
+  grep -q '^PINPOINT_VERSION=' .env || echo "PINPOINT_VERSION=${PINPOINT_VERSION}" >> .env
+fi
+# 최신 이미지 pull
+compose_cmd pull
+compose_cmd up -d
+compose_cmd ps

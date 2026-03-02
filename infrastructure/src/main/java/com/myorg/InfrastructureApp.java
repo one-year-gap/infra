@@ -1,12 +1,20 @@
 package com.myorg;
 
 import com.myorg.config.AppConfig;
-import com.myorg.config.MonitoringConfig;
+import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import com.myorg.props.DnsProps;
-import com.myorg.stacks.*;
+import com.myorg.props.MonitoringStackProps;
+import com.myorg.stacks.AlbStack;
+import com.myorg.stacks.DnsStack;
+import com.myorg.stacks.EcrStack;
+import com.myorg.stacks.EcsClusterStack;
+import com.myorg.stacks.MonitoringStack;
+import com.myorg.stacks.NetworkStack;
+import com.myorg.stacks.RdsStack;
+import com.myorg.stacks.Route53Stack;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
@@ -129,10 +137,7 @@ public class InfrastructureApp {
      */
     private static void deployMonitoring(DeploymentContext context) {
         NetworkStack networkStack = createNetworkStack(context);
-        new MonitoringStack(
-                context.app(),
-                MONITORING_STACK_ID,
-                context.stackProps(),
+        MonitoringStackProps props = new MonitoringStackProps(
                 networkStack.getVpc(),
                 networkStack.getDbSg(),
                 networkStack.getAdminApiSg(),
@@ -140,6 +145,12 @@ public class InfrastructureApp {
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
+        );
+        new MonitoringStack(
+                context.app(),
+                MONITORING_STACK_ID,
+                context.stackProps(),
+                props
         );
     }
 
