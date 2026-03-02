@@ -34,8 +34,9 @@ public class InfrastructureApp {
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
-    private static final String DEFAULT_DEPLOY_MODE = "route53";
+    private static final String EFS_STACK_ID = "EfsStack";
 
+    private static final String DEFAULT_DEPLOY_MODE = "route53";
     private static final String DEPLOY_MODE_ROUTE53 = "route53";
     private static final String DEPLOY_MODE_ECR = "ecr";
     private static final String DEPLOY_MODE_NETWORK = "network";
@@ -44,7 +45,9 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_ALB = "alb";
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
+    private static final String DEPLOY_MODE_EFS = "efs";
     private static final String DEPLOY_MODE_FULL = "full";
+
 
     /**
      * deployMode에 따라 배포할 스택 체인을 선택.
@@ -62,11 +65,25 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
+            case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
             default -> throw new IllegalArgumentException("지원하지 않는 deployMode : "
-                    + deploymentContext.deployMode());
+                                                          + deploymentContext.deployMode());
         }
 
         app.synth();
+    }
+
+    /**
+     * AWS EFS Stack Deploy
+     */
+    private static void deployEfs(DeploymentContext deploymentContext) {
+        new EfsStack(
+                deploymentContext.app(),
+                EFS_STACK_ID,
+                deploymentContext.stackProps(),
+                AppConfig.getEfsTargetVpcId(),
+                AppConfig.getMonitoringSecurityGroupId()
+        );
     }
 
     /**
