@@ -1,0 +1,23 @@
+# 전역 스크랩 설정.
+global:
+  # 전체 타깃 기본 수집 주기.
+  scrape_interval: __PROMETHEUSSCRAPEINTERVAL__
+
+# 수집 대상(job) 목록.
+scrape_configs:
+  # PostgreSQL exporter 메트릭 수집.
+  - job_name: __PGEXPORTERPROMETHEUSJOBNAME__
+    static_configs:
+      - targets: ['__PGEXPORTERCONTAINERNAME__:__PGEXPORTERPORT__']
+
+  # Admin API actuator/prometheus 수집.
+  - job_name: __ADMINAPIPROMETHEUSJOBNAME__
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['__ADMINAPIMETRICSTARGET__']
+
+  # Customer API actuator/prometheus 수집.
+  - job_name: __CUSTOMERAPIPROMETHEUSJOBNAME__
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ['__CUSTOMERAPIMETRICSTARGET__']

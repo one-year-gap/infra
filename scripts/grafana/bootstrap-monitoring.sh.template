@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# =======================================================
+# bootstrap-monitoring.sh
+# Prometheus + pg_exporter Container 가동
+# =======================================================
+
+set -euo pipefail
+
+REGION="__REGION__"
+DB_SECRET_ID="__DBSECRETID__"
+# =======================================================
+# ------------------------ Secrets Manager에서 RDS 접속 정보 조회 ------------------------
+SECRET_JSON=$(aws --region "$REGION" secretsmanager get-secret-value --secret-id "$DB_SECRET_ID" --query SecretString --output text)
+
+DB_HOST=$(echo "$SECRET_JSON" | jq -r '.host')
+DB_PORT=$(echo "$SECRET_JSON" | jq -r '.port')
+DB_NAME=$(echo "$SECRET_JSON" | jq -r '.dbname')
+DB_USER=$(echo "$SECRET_JSON" | jq -r '.username')
+DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+
+# ------------------------ Docker Network ------------------------
+docker network create __DOCKERNETWORKNAME__ >/dev/null 2>&1 || true
+
+# ------------------------ pg_exporter ------------------------
+docker rm -f __PGEXPORTERCONTAINERNAME__ __PROMETHEUSCONTAINERNAME__ >/dev/null 2>&1 || true
+
+docker run -d --name __PGEXPORTERCONTAINERNAME__ --restart unless-stopped \
+  --network __DOCKERNETWORKNAME__ \
+  -e PGHOST="$DB_HOST" \
+  -e PGPORT="$DB_PORT" \
+  -e PGDATABASE="$DB_NAME" \
+  -e PGUSER="$DB_USER" \
+  -e PGPASSWORD="$DB_PASSWORD" \
+  -e PGSSLMODE="require" \
+  __PGEXPORTERIMAGE__ \
+  --exclude-databases "__PGEXPORTEREXCLUDEDATABASES__" \
+  --collector.locks \
+  --collector.database \
+  --collector.stat \
+  --collector.index \
+  --collector.statements \
+  --collector.exporter
+
+# ------------------------ Prometheus ------------------------
+docker run -d --name __PROMETHEUSCONTAINERNAME__ --restart unless-stopped \
+  --network __DOCKERNETWORKNAME__ \
+  -p 127.0.0.1:__PROMETHEUSPORT__:9090 \
+  -v __PROMETHEUSCONFIGPATH__:/etc/prometheus/prometheus.yml:ro \
+  __PROMETHEUSIMAGE__

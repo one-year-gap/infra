@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# =======================================================
+# pinpoint-status.sh
+# Pinpoint Container 상태 조회
+# =======================================================
+
+
+set -euo pipefail
+# Pinpoint compose 프로젝트 디렉터리
+PINPOINT_DIR="__PINPOINTREPODIR__"
+
+compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then docker compose "$@"; return; fi
+  if command -v docker-compose >/dev/null 2>&1; then docker-compose "$@"; return; fi
+  echo "docker compose command not found" >&2
+  exit 1
+}
+if [ ! -d "$PINPOINT_DIR" ]; then
+  echo "Pinpoint directory does not exist: $PINPOINT_DIR"
+  exit 0
+fi
+# 컨테이너 상태
+cd "$PINPOINT_DIR"
+compose_cmd ps

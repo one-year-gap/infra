@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# =======================================================
+# provision-dashboard.sh
+# Prometheus에서 수집 중인 매트릭 목록 조회 -> Grafana 대시보드 생성
+# =======================================================
+
+
+set -euo pipefail
+# Grafana/Prometheus 접속 URL과 대시보드 생성 한도를 지정
+GRAFANA_URL="http://127.0.0.1:__GRAFANAPORT__"
+PROM_URL="http://127.0.0.1:__PROMETHEUSPORT__"
+PANEL_LIMIT=__AUTODASHBOARDPANELLIMIT__
+# Grafana API 인증 계정
+GRAFANA_USER="__GRAFANAADMINUSER__"
+GRAFANA_PASSWORD="__GRAFANAADMINPASSWORD__"
+# 앱/DB 메트릭용 job
+APP_JOB_REGEX="__ADMINAPIPROMETHEUSJOBNAME__|__CUSTOMERAPIPROMETHEUSJOBNAME__"
+DB_JOB_REGEX="__PGEXPORTERPROMETHEUSJOBNAME__"
+
+
+api() {
+  local method="$1";
+  local path="$2";
+  local payload="${3:-}";
+  if [ -n "$payload" ]; then
+    # payload가 있으면 body 포함 요청
+    curl -fsS -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" -H "Content-Type: application/json" -X "$method" "${GRAFANA_URL}${path}" -d "$payload";
+  else
+    # payload가 없으면 기본 요청
+    curl -fsS -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" -H "Content-Type: application/json" -X "$method" "${GRAFANA_URL}${path}";
+  fi
+}
+
+# ------------------------ Health Check ------------------------
+wait_http() {
+  local url="$1";
+  for _ in $(seq 1 120); do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      return 0;
+    fi
+    sleep 2;
+  done
+  return 1
+}
+
+# Grafana와 Prometheus 준비 상태를 확인
+wait_http "${GRAFANA_URL}/api/health"
+wait_http "${PROM_URL}/-/ready"
+
+PROM_DS_UID=$(api GET "/api/datasources/name/prometheus" | jq -r '.uid')
+
+# ------------------------ 매트락 전체 목록 수집 ------------------------
+mapfile -t ALL_METRICS < <(curl -fsS "${PROM_URL}/api/v1/label/__name__/values" | jq -r '.data[]' | sort -u)
+
+declare -A USED_METRICS
+
+collect_metrics() {
+  local pattern="$1";
+  local -n output="$2";
+  output=()
+  local metric="";
+  for metric in "${ALL_METRICS[@]}"; do
+    if [[ "$metric" =~ $pattern ]] && [[ -z "${USED_METRICS[$metric]:-}" ]]; then
+      USED_METRICS[$metric]=1
+      output+=("$metric")
+    fi
+  done
+}
+
+# 일반 timeseries 대시보드를 자동 생성
+build_dashboard() {
+  local uid="$1";
+  local title="$2";
+  local jobRegex="$3";
+  local -n metricList="$4";
+  local panels='[]';
+  local panelId=1;
+  local x=0;
+  local y=0;
+  local metric="";
+  for metric in "${metricList[@]}"; do
+    # 최대 panel 개수 제한
+    if [ "$panelId" -gt "$PANEL_LIMIT" ]; then
+      break
+    fi
+    # metric별 표현식/패널 JSON 생성
+    local expr="sum by (job) (${metric}{job=~\"${jobRegex}\"})";
+    local panel="";
+    panel=$(jq -n --argjson id "$panelId" --arg title "$metric" --arg expr "$expr" --arg dsUid "$PROM_DS_UID" --argjson x "$x" --argjson y "$y" '{id:$id,type:"timeseries",title:$title,datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:8,w:8,x:$x,y:$y},targets:[{refId:"A",expr:$expr,legendFormat:"{{job}}"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+    panels=$(jq --argjson panel "$panel" '. + [$panel]' <<<"$panels")
+    panelId=$((panelId + 1))
+    x=$((x + 8))
+    if [ "$x" -ge 24 ]; then
+      x=0
+      y=$((y + 8))
+    fi
+  done
+
+  if [ "$(jq 'length' <<<"$panels")" -eq 0 ]; then
+    local fallback="";
+    fallback=$(jq -n --arg dsUid "$PROM_DS_UID" --arg jobRegex "$jobRegex" '{id:1,type:"timeseries",title:"up",datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:8,w:24,x:0,y:0},targets:[{refId:"A",expr:("up{job=~\"" + $jobRegex + "\"}"),legendFormat:"{{job}}"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+    panels=$(jq --argjson panel "$fallback" '. + [$panel]' <<<"$panels")
+  fi
+  local payload="";
+  # 대시보드 생성
+  payload=$(jq -n --arg uid "$uid" --arg title "$title" --argjson panels "$panels" '{dashboard:{uid:$uid,title:$title,schemaVersion:39,version:1,refresh:"30s",timezone:"browser",tags:["hsc","auto","no-overlap"],editable:true,panels:$panels},overwrite:true}')
+  api POST "/api/dashboards/db" "$payload" >/dev/null
+}
+
+# PostgreSQL exporter 그룹형 대시보드 자동 생성
+build_postgresql_dashboard() {
+  local uid="$1";
+  local title="$2";
+  local jobRegex="$3";
+  local panels='[]';
+  local panelId=1;
+  local x=0;
+  local y=0;
+  local panel="";
+  local expr="";
+  local metric="";
+  local groupTitle="";
+  local groupRegex="";
+  local limitReached=0;
+  declare -A DB_USED
+  local -a GROUP_TITLES=(
+    "Overview"
+    "Connections & Sessions"
+    "Transactions & Tuples"
+    "Cache / Buffers / Checkpoints"
+    "WAL & Replication"
+    "Locks / Waits / Blocking"
+    "Table / Index / Vacuum"
+    "IO / Temp / Size"
+  )
+  local -a GROUP_REGEX=(
+    "^(pg_up|pg_exporter_.*)$"
+    "(connection|session|backends|numbackends|max_connections|active|idle|waiting|wait)"
+    "(xact|transaction|commit|rollback|tuples|rows|deadlock|conflict)"
+    "(blks_|cache|buffer|bgwriter|checkpoint)"
+    "(wal|replication|replay|slot|lag)"
+    "(lock|blocking|wait_event)"
+    "(vacuum|autovacuum|analyze|seq_scan|idx_scan|dead_tup|n_tup|table|index)"
+    "(temp|files|bytes|size|io|iops|throughput)"
+  )
+
+
+  for i in "${!GROUP_TITLES[@]}"; do
+    groupTitle="${GROUP_TITLES[$i]}"
+    groupRegex="${GROUP_REGEX[$i]}"
+
+    panel=$(jq -n --argjson id "$panelId" --arg title "$groupTitle" --argjson y "$y" '{id:$id,type:"row",title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y},panels:[]}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+    panelId=$((panelId + 1))
+    y=$((y + 1))
+    x=0
+
+    for metric in "${DB_METRICS[@]}"; do
+
+      if [ "$panelId" -gt "$PANEL_LIMIT" ]; then
+        limitReached=1
+        break
+      fi
+      if [[ -n "${DB_USED[$metric]:-}" ]]; then
+        continue
+      fi
+      if [[ "$metric" =~ $groupRegex ]]; then
+
+        DB_USED[$metric]=1
+        expr="sum by (instance) (${metric}{job=~\"${jobRegex}\"})"
+        panel=$(jq -n --argjson id "$panelId" --arg title "$metric" --arg expr "$expr" --arg dsUid "$PROM_DS_UID" --argjson x "$x" --argjson y "$y" '{id:$id,type:"timeseries",title:$title,datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:8,w:8,x:$x,y:$y},targets:[{refId:"A",expr:$expr,legendFormat:"{{instance}}"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+        panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+        panelId=$((panelId + 1))
+        x=$((x + 8))
+        if [ "$x" -ge 24 ]; then
+          x=0
+          y=$((y + 8))
+        fi
+      fi
+    done
+
+    if [ "$x" -ne 0 ]; then
+      x=0
+      y=$((y + 8))
+    fi
+    if [ "$limitReached" -eq 1 ]; then
+      break
+    fi
+  done
+
+  if [ "$limitReached" -eq 0 ]; then
+    panel=$(jq -n --argjson id "$panelId" --arg title "Other DB Metrics" --argjson y "$y" '{id:$id,type:"row",title:$title,collapsed:false,gridPos:{h:1,w:24,x:0,y:$y},panels:[]}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+    panelId=$((panelId + 1))
+    y=$((y + 1))
+    x=0
+    for metric in "${DB_METRICS[@]}"; do
+      if [ "$panelId" -gt "$PANEL_LIMIT" ]; then
+        break
+      fi
+      if [[ -n "${DB_USED[$metric]:-}" ]]; then
+        continue
+      fi
+      expr="sum by (instance) (${metric}{job=~\"${jobRegex}\"})"
+      panel=$(jq -n --argjson id "$panelId" --arg title "$metric" --arg expr "$expr" --arg dsUid "$PROM_DS_UID" --argjson x "$x" --argjson y "$y" '{id:$id,type:"timeseries",title:$title,datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:8,w:8,x:$x,y:$y},targets:[{refId:"A",expr:$expr,legendFormat:"{{instance}}"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+      panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+      panelId=$((panelId + 1))
+      x=$((x + 8))
+      if [ "$x" -ge 24 ]; then
+        x=0
+        y=$((y + 8))
+      fi
+    done
+  fi
+
+
+  if [ "$(jq 'length' <<<"$panels")" -eq 0 ]; then
+    panel=$(jq -n --arg dsUid "$PROM_DS_UID" --arg jobRegex "$jobRegex" '{id:1,type:"timeseries",title:"up",datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:8,w:24,x:0,y:0},targets:[{refId:"A",expr:("up{job=~\"" + $jobRegex + "\"}"),legendFormat:"{{job}}"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+  fi
+
+  # PostgreSQL 대시보드 생성
+  payload=$(jq -n --arg uid "$uid" --arg title "$title" --argjson panels "$panels" '{dashboard:{uid:$uid,title:$title,schemaVersion:39,version:1,refresh:"30s",timezone:"browser",tags:["hsc","auto","postgres","no-overlap"],editable:true,panels:$panels},overwrite:true}')
+  api POST "/api/dashboards/db" "$payload" >/dev/null
+}
+
+# 메트릭을 카테고리별로 분류
+collect_metrics '^(jvm_|process_|system_|disk_)' JVM_METRICS
+collect_metrics '^(hikaricp_|jdbc_|tomcat_|executor_|logback_|application_)' SPRING_RUNTIME_METRICS
+collect_metrics '^(http_server_requests_|http_client_requests_|resilience4j_|spring_security_|spring_data_repository_|cache_|reactor_|kafka_|rabbitmq_|redis_)' SPRING_HTTP_METRICS
+collect_metrics '^(pg_|postgres_)' DB_METRICS
+
+# 각 카테고리 대시보드를 생성
+build_dashboard "hsc-jvm-micrometer" "JVM (Micrometer) - Auto" "$APP_JOB_REGEX" JVM_METRICS
+build_dashboard "hsc-spring-runtime" "Spring Runtime - Auto" "$APP_JOB_REGEX" SPRING_RUNTIME_METRICS
+build_dashboard "hsc-spring-http" "Spring HTTP & App - Auto" "$APP_JOB_REGEX" SPRING_HTTP_METRICS
+build_postgresql_dashboard "hsc-postgresql-exporter" "PostgreSQL Exporter - Auto" "$DB_JOB_REGEX"

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# 모니터링 관련 파일 디렉터리
+MONITORING_DIR="__MONITORINGDIR__"
+TARGET_SWAP_GIB=__SWAPSIZEGIB__
+
+# Install runtime dependencies for monitoring containers and scripts.
+dnf install -y docker jq git --allowerasing
+# Docker 데몬 자동 시작/부팅 시 활성화
+systemctl enable --now docker
+# 모니터링 작업 디렉터리 생성
+mkdir -p "$MONITORING_DIR"
+
+if [ "$TARGET_SWAP_GIB" -gt 0 ]; then
+  TARGET_SWAP_MIB=$((TARGET_SWAP_GIB * 1024))
+  CURRENT_SWAP_MIB=0
+
+  if [ -f /swapfile ]; then
+    CURRENT_SWAP_MIB=$(( $(stat -c%s /swapfile) / 1024 / 1024 ))
+  fi
+
+  if [ "$CURRENT_SWAP_MIB" -ne "$TARGET_SWAP_MIB" ] || ! swapon --show=NAME | grep -q '^/swapfile$'; then
+    swapoff /swapfile >/dev/null 2>&1 || true
+    rm -f /swapfile
+    dd if=/dev/zero of=/swapfile bs=1M count=$TARGET_SWAP_MIB status=none
+    # swap 파일 권한 제한.
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+  fi
+
+  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+if ! command -v docker-compose >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+  COMPOSE_ARCH=$(uname -m)
+  if [ "$COMPOSE_ARCH" = "x86_64" ]; then COMPOSE_ARCH=linux-x86_64; else COMPOSE_ARCH=linux-aarch64; fi
+  curl -L "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-${COMPOSE_ARCH}" -o /usr/local/bin/docker-compose
+  # 실행 권한 부여
+  chmod +x /usr/local/bin/docker-compose
+fi
