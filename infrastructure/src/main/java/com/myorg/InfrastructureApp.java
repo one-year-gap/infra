@@ -1,11 +1,12 @@
 package com.myorg;
 
 import com.myorg.config.AppConfig;
-import com.myorg.config.MonitoringConfig;
+import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import com.myorg.props.DnsProps;
+import com.myorg.props.MonitoringStackProps;
 import com.myorg.stacks.AlbStack;
 import com.myorg.stacks.DnsStack;
 import com.myorg.stacks.EcrStack;
@@ -119,10 +120,7 @@ public class InfrastructureApp {
      */
     private static void deployMonitoring(DeploymentContext context) {
         NetworkStack networkStack = createNetworkStack(context);
-        new MonitoringStack(
-                context.app(),
-                MONITORING_STACK_ID,
-                context.stackProps(),
+        MonitoringStackProps props = new MonitoringStackProps(
                 networkStack.getVpc(),
                 networkStack.getDbSg(),
                 networkStack.getAdminApiSg(),
@@ -130,6 +128,12 @@ public class InfrastructureApp {
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
+        );
+        new MonitoringStack(
+                context.app(),
+                MONITORING_STACK_ID,
+                context.stackProps(),
+                props
         );
     }
 

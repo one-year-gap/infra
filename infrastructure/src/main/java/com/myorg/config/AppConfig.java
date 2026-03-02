@@ -49,11 +49,10 @@ public final class AppConfig {
         return getRequiredValue("DOMAIN_NAME");
     }
 
-
     /**
      * domain internal 주소
      */
-    public static String getInternalDomainName(){
+    public static String getInternalDomainName() {
         return getRequiredValue("DOMAIN_INTERNAL_NAME");
     }
 
@@ -97,21 +96,12 @@ public final class AppConfig {
     }
 
     /*
-    * =================================================================
-    *                              Grafana
-    * =================================================================
-    */
-    public static String getMonitoringInstanceType(){
-        return getOptionalValue("MONITORING_INSTANCE_TYPE");
-    }
+     * =================================================================
+     * 편의 메서드
+     * =================================================================
+     */
 
-    /*
-    * =================================================================
-    *                            편의 메서드
-    * =================================================================
-    */
-
-    private static String getOptionalValue(String key) {
+    public static String getOptionalValue(String key) {
         String value = System.getenv(key);
         if (value != null && !value.isBlank()) {
             return value.trim();
@@ -124,4 +114,33 @@ public final class AppConfig {
 
         return null;
     }
+
+    /**
+     * EnvKey 기반 조회: 환경변수 없으면 EnvKey에 설정된 defaultValue 사용
+     */
+    public static String getValueOrDefault(EnvKey key) {
+        String value = getOptionalValue(key.key());
+        if (value != null)
+            return value;
+        String def = key.getDefaultValue();
+        if (def == null) {
+            throw new IllegalStateException(key.key() + "에 해당하는 환경변수가 존재하지 않습니다.");
+        }
+        return def;
+    }
+
+    public static String getValue(EnvKey key) {
+        String value = System.getenv(key.key());
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+
+        value = DOTENV.get(key.key());
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+
+        return null;
+    }
+
 }

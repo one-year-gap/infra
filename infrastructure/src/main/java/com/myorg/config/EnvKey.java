@@ -4,7 +4,7 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                             Network
+     * Network
      * =================================================================
      */
     ADMIN_ALLOWED_CIDRS,
@@ -14,7 +14,7 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                              Port
+     * Port
      * =================================================================
      */
     ADMIN_WEB_PORT,
@@ -24,7 +24,7 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                              Repository
+     * Repository
      * =================================================================
      */
     ADMIN_WEB_REPOSITORY,
@@ -32,14 +32,14 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                              Deploy
+     * Deploy
      * =================================================================
      */
     DEPLOY_MODE("ecs"),
 
     /*
      * =================================================================
-     *                              AWS
+     * AWS
      * =================================================================
      */
     CDK_DEFAULT_ACCOUNT,
@@ -49,7 +49,7 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                              Tag
+     * Tag
      * =================================================================
      */
     API_IMAGE_TAG,
@@ -59,7 +59,7 @@ public enum EnvKey {
 
     /*
      * =================================================================
-     *                              Secret Manager
+     * Secret Manager
      * =================================================================
      */
     ADMIN_WEB_RUNTIME_SECRET_NAME,
@@ -76,9 +76,58 @@ public enum EnvKey {
     ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARN,
     ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS,
     CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN,
-    CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS
-    ;
+    CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS,
 
+    /*
+     * =================================================================
+     * Grafana
+     * =================================================================
+     */
+    MONITORING_INSTANCE_TYPE("t3.small"),
+    MONITORING_ROOT_VOLUME_GIB("30"),
+    MONITORING_SWAP_SIZE_GIB("4"),
+    MONITORING_SUBNET_TYPE("PRIVATE_WITH_EGRESS"),
+    MONITORING_SSM_PORT_FORWARD_DOCUMENT("AWS-StartPortForwardingSession"),
+    MONITORING_DB_SECRET_NAME_PREFIX("holliverse/rds/postgres"),
+    MONITORING_DB_SECRET_ID("holliverse/rds/postgres"),
+    MONITORING_DOCKER_NETWORK_NAME("monitoring-net"),
+    MONITORING_PROMETHEUS_CONTAINER_NAME("prometheus"),
+    MONITORING_PROMETHEUS_IMAGE(
+            "prom/prometheus@sha256:1f0f50f06acaceb0f5670d2c8a658a599affe7b0d8e78b898c1035653849a702"),
+    MONITORING_PROMETHEUS_PORT("9090"),
+    MONITORING_PROMETHEUS_SCRAPE_INTERVAL("15s"),
+    MONITORING_AUTO_DASHBOARD_PANEL_LIMIT("60"),
+    MONITORING_PG_EXPORTER_CONTAINER_NAME("pg_exporter"),
+    MONITORING_PG_EXPORTER_IMAGE(
+            "ghcr.io/nbari/pg_exporter@sha256:a5c6693dfd41c5bea7391e387a860252712e6ab62c2c1293fb7d972edf3a72ef"),
+    MONITORING_PG_EXPORTER_PORT("9432"),
+    MONITORING_PG_EXPORTER_EXCLUDE_DATABASES("rdsadmin,postgres,template0,template1"),
+    MONITORING_PG_EXPORTER_JOB_NAME("pg_exporter"),
+    MONITORING_ADMIN_API_JOB_NAME("admin-api"),
+    MONITORING_CUSTOMER_API_JOB_NAME("customer-api"),
+    MONITORING_ADMIN_API_SERVICE_DNS_LABEL("admin-api"),
+    MONITORING_CUSTOMER_API_SERVICE_DNS_LABEL("customer-api"),
+
+    // Grafana
+    MONITORING_GRAFANA_PORT("3000"),
+    MONITORING_LOCAL_FORWARD_PORT("13000"),
+    MONITORING_GRAFANA_REPO_NAME("grafana"),
+    MONITORING_GRAFANA_REPO_BASE_URL("https://rpm.grafana.com"),
+    MONITORING_GRAFANA_REPO_GPG_KEY_URL("https://rpm.grafana.com/gpg.key"),
+    MONITORING_GRAFANA_PACKAGE_NAME("grafana"),
+    MONITORING_GRAFANA_SERVICE_NAME("grafana-server"),
+    MONITORING_GRAFANA_ADMIN_USER,
+    MONITORING_GRAFANA_ADMIN_PASSWORD,
+
+    // Pinpoint
+    MONITORING_PINPOINT_REPO_URL("https://github.com/pinpoint-apm/pinpoint-docker.git"),
+    MONITORING_PINPOINT_REPO_DIR("/opt/pinpoint-docker"),
+    MONITORING_PINPOINT_VERSION("3.0.4"),
+    MONITORING_PINPOINT_GIT_REF(""),
+    MONITORING_PINPOINT_WEB_PORT("8080"),
+    MONITORING_PINPOINT_LOCAL_FORWARD_PORT("18080"),
+
+    ;
 
     private final String defaultValue;
 
@@ -97,4 +146,4 @@ public enum EnvKey {
     public String key() {
         return this.name();
     }
-    }
+}
