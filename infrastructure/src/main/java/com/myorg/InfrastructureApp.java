@@ -65,7 +65,7 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
-            case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
+            //case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
             default -> throw new IllegalArgumentException("지원하지 않는 deployMode : "
                                                           + deploymentContext.deployMode());
         }
@@ -76,15 +76,15 @@ public class InfrastructureApp {
     /**
      * AWS EFS Stack Deploy
      */
-    private static void deployEfs(DeploymentContext deploymentContext) {
-        new EfsStack(
-                deploymentContext.app(),
-                EFS_STACK_ID,
-                deploymentContext.stackProps(),
-                AppConfig.getEfsTargetVpcId(),
-                AppConfig.getMonitoringSecurityGroupId()
-        );
-    }
+//    private static void deployEfs(DeploymentContext deploymentContext) {
+//        new EfsStack(
+//                deploymentContext.app(),
+//                EFS_STACK_ID,
+//                deploymentContext.stackProps(),
+//                AppConfig.getEfsTargetVpcId(),
+//                AppConfig.getMonitoringSecurityGroupId()
+//        );
+//    }
 
     /**
      * Route53 Hosted Zone 스택 배포
