@@ -25,7 +25,7 @@ jobs:
             }
 
             const releaseLabels = ["release:major", "release:minor", "release:patch"];
-            const deployLabels = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web"];
+            const deployLabels = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web", "deploy:worker", "deploy:counseling-analytics"];
 
             const selectedRelease = releaseLabels.filter(l => labels.includes(l));
             const selectedDeploy = deployLabels.filter(l => labels.includes(l));

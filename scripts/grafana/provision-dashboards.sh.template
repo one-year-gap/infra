@@ -265,14 +265,14 @@ build_loki_dashboard() {
   }
 
   add_ts_panel 1 0 0 7 8 "FATAL Count (1m)" '(sum(count_over_time({source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)fatal"}[1m])) or vector(0))'
-  add_ts_panel 2 8 0 7 8 "ERROR Count by Service (5m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error"}[5m])) or vector(0))'
-  add_ts_panel 3 16 0 7 8 "WARN Count by Service (10m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)warn"}[10m])) or vector(0))'
+  add_ts_panel 2 8 0 7 8 "ERROR Count by Service (5m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)error"}[5m])) or vector(0))'
+  add_ts_panel 3 16 0 7 8 "WARN Count by Service (10m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)warn"}[10m])) or vector(0))'
   add_ts_panel 4 0 7 7 8 "HTTP 5xx by URI (5m)" 'sum by (uri_template) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",status=~"5.."}[5m]))'
   add_ts_panel 5 8 7 7 8 "Top Error Code (30m)" '(topk(10, sum by (error_code) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",error_code!=""}[30m]))) or vector(0))'
   add_ts_panel 6 16 7 7 8 "Parse Error Count (5m)" '(sum(count_over_time({source="cloudwatch",job="ecs-cloudwatch",parse_error="true"}[5m])) or vector(0))'
-  add_ts_panel 7 0 14 7 12 "ERROR/FATAL by Team (15m)" '(sum by (team) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error|fatal"}[15m])) or vector(0))'
+  add_ts_panel 7 0 14 7 12 "ERROR/FATAL by Team (15m)" '(sum by (team) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)error|fatal"}[15m])) or vector(0))'
   add_ts_panel 8 12 14 7 12 "Requests by Method/URI (5m)" 'sum by (method,uri_template) (count_over_time({source="cloudwatch",job="ecs-cloudwatch"}[5m]))'
-  add_logs_panel 9 0 21 10 12 "Live ERROR/FATAL Logs" '{source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error|fatal"}'
+  add_logs_panel 9 0 21 10 12 "Live ERROR/FATAL Logs" '{source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)error|fatal"}'
   add_logs_panel 10 12 21 10 12 "Live 5xx Request Logs" '{source="cloudwatch",job="ecs-cloudwatch",status=~"5.."}'
 
   local payload="";
