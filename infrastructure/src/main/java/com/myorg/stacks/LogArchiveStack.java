@@ -36,7 +36,6 @@ public class LogArchiveStack extends Stack {
                 .encryption(BucketEncryption.S3_MANAGED)
                 .blockPublicAccess(BlockPublicAccess.BLOCK_ALL)
                 .enforceSsl(true)
-                .versioned(true)
                 .removalPolicy(RemovalPolicy.RETAIN)
                 // Lifecycle 정책: 전용 Loki 로그 버킷 전체 객체에 티어링/만료 적용.
                 .lifecycleRules(List.of(
@@ -69,6 +68,8 @@ public class LogArchiveStack extends Stack {
                                 ))
                                 // 365일 경과: 만료 삭제.
                                 .expiration(Duration.days(365))
+                                .noncurrentVersionExpiration(Duration.days(1))
+                                .expiredObjectDeleteMarker(true)
                                 .build()
                 ))
                 .build();
