@@ -19,6 +19,8 @@
 <!-- 배포 대상 라벨(1개 이상) 체크 --> 
 
 - [ ] deploy:api-server
+- [ ] deploy:worker
+- [ ] deploy:counseling-analytics
 - [ ] deploy:customer-web
 - [ ] deploy:admin-web
 

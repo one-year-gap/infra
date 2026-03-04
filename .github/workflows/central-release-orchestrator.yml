@@ -34,6 +34,34 @@ on:
         required: true
       API_SERVER_REPOSITORY:
         required: true
+      WORKER_REPOSITORY:
+        required: false
+      WORKER_TASK_DEFINITION_ARN:
+        required: false
+      WORKER_TASK_DEFINITION_FAMILY:
+        required: false
+      WORKER_CONTAINER_NAME:
+        required: false
+      WORKER_CLUSTER_NAME:
+        required: false
+      WORKER_SUBNET_IDS:
+        required: false
+      WORKER_SECURITY_GROUP_IDS:
+        required: false
+      WORKER_ASSIGN_PUBLIC_IP:
+        required: false
+      COUNSELING_ANALYTICS_REPOSITORY:
+        required: false
+      COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:
+        required: false
+      COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:
+        required: false
+      COUNSELING_ANALYTICS_CONTAINER_NAME:
+        required: false
+      COUNSELING_ANALYTICS_CLUSTER_NAME:
+        required: false
+      COUNSELING_ANALYTICS_SERVICE_NAME:
+        required: false
       DOMAIN_NAME:
         required: true
       VERCEL_APEX_IP:
@@ -85,7 +113,7 @@ on:
           - release:minor
           - release:patch
       deploy-labels:
-        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web)"
+        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web,deploy:worker,deploy:counseling-analytics)"
         required: true
         default: "deploy:api-server"
         type: string
@@ -113,6 +141,20 @@ env:
   CUSTOMER_SERVER_PORT: ${{ secrets.CUSTOMER_SERVER_PORT }}
   ADMIN_WEB_REPOSITORY: ${{ secrets.ADMIN_WEB_REPOSITORY }}
   API_SERVER_REPOSITORY: ${{ secrets.API_SERVER_REPOSITORY }}
+  WORKER_REPOSITORY: ${{ secrets.WORKER_REPOSITORY }}
+  WORKER_TASK_DEFINITION_ARN: ${{ secrets.WORKER_TASK_DEFINITION_ARN }}
+  WORKER_TASK_DEFINITION_FAMILY: ${{ secrets.WORKER_TASK_DEFINITION_FAMILY }}
+  WORKER_CONTAINER_NAME: ${{ secrets.WORKER_CONTAINER_NAME }}
+  WORKER_CLUSTER_NAME: ${{ secrets.WORKER_CLUSTER_NAME }}
+  WORKER_SUBNET_IDS: ${{ secrets.WORKER_SUBNET_IDS }}
+  WORKER_SECURITY_GROUP_IDS: ${{ secrets.WORKER_SECURITY_GROUP_IDS }}
+  WORKER_ASSIGN_PUBLIC_IP: ${{ secrets.WORKER_ASSIGN_PUBLIC_IP }}
+  COUNSELING_ANALYTICS_REPOSITORY: ${{ secrets.COUNSELING_ANALYTICS_REPOSITORY }}
+  COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
+  COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
+  COUNSELING_ANALYTICS_CONTAINER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CONTAINER_NAME }}
+  COUNSELING_ANALYTICS_CLUSTER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CLUSTER_NAME }}
+  COUNSELING_ANALYTICS_SERVICE_NAME: ${{ secrets.COUNSELING_ANALYTICS_SERVICE_NAME }}
   DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
   VERCEL_APEX_IP: ${{ secrets.VERCEL_APEX_IP }}
   DOMAIN_INTERNAL_NAME: ${{ secrets.DOMAIN_INTERNAL_NAME }}
@@ -129,6 +171,8 @@ env:
   # Source repos
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
+  WORKER_SOURCE_REPO: one-year-gap/worker
+  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/counseling-analytics
 
 jobs:
   resolve-context:
@@ -153,7 +197,7 @@ jobs:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const releaseAllowed = ["release:major", "release:minor", "release:patch"];
-            const deployAllowed  = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web"];
+            const deployAllowed  = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web", "deploy:worker", "deploy:counseling-analytics"];
 
             function splitRepo(full) {
               const parts = String(full || "").trim().split("/");
@@ -208,7 +252,9 @@ jobs:
               const candidateRepos = Array.from(new Set([
                 full,
                 process.env.API_SERVER_SOURCE_REPO,
-                process.env.ADMIN_WEB_SOURCE_REPO
+                process.env.ADMIN_WEB_SOURCE_REPO,
+                process.env.WORKER_SOURCE_REPO,
+                process.env.COUNSELING_ANALYTICS_SOURCE_REPO
               ].filter(Boolean).map(v => String(v).trim())));
 
               let matchedRepo = null;
@@ -599,6 +645,148 @@ jobs:
             docker push "${REPO}:${VERSION_TAG}"
           fi
 
+
+  build-and-push-worker:
+    runs-on: ubuntu-latest
+    needs: [resolve-context, create-tag]
+    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:worker')
+    steps:
+      - name: Validate worker repository secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${WORKER_REPOSITORY:-}" ]; then
+            echo "::error::WORKER_REPOSITORY secret is required for deploy:worker"
+            exit 1
+          fi
+
+      - name: Resolve worker source repository
+        id: resolve-worker-repo
+        shell: bash
+        env:
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_NAME" == "worker" ]]; then
+            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
+            echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout worker
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve-worker-repo.outputs.repo }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout source sha if source repo is worker
+        if: needs.resolve-context.outputs.source_name == 'worker' && needs.resolve-context.outputs.source_sha != ''
+        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Worker image
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REPO="${REGISTRY}/${WORKER_REPOSITORY}"
+          WORKER_TAG="worker-${VERSION_TAG}"
+
+          if aws ecr describe-images --repository-name "${WORKER_REPOSITORY}" --image-ids imageTag="${WORKER_TAG}" >/dev/null 2>&1; then
+            echo "Skip push: ${REPO}:${WORKER_TAG} already exists."
+          else
+            docker build --platform linux/amd64 \
+              -t "${REPO}:${WORKER_TAG}" \
+              .
+            docker push "${REPO}:${WORKER_TAG}"
+          fi
+
+
+  build-and-push-counseling-analytics:
+    runs-on: ubuntu-latest
+    needs: [resolve-context, create-tag]
+    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:counseling-analytics')
+    steps:
+      - name: Validate counseling analytics repository secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
+            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required for deploy:counseling-analytics"
+            exit 1
+          fi
+
+      - name: Resolve counseling analytics source repository
+        id: resolve-counseling-repo
+        shell: bash
+        env:
+          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
+          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_NAME" == "counseling-analytics" ]]; then
+            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
+            echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
+          else
+            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout counseling analytics
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve-counseling-repo.outputs.repo }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout source sha if source repo is counseling-analytics
+        if: needs.resolve-context.outputs.source_name == 'counseling-analytics' && needs.resolve-context.outputs.source_sha != ''
+        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push counseling analytics image
+        shell: bash
+        env:
+          VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REPO="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}"
+          IMAGE_TAG="counseling-analytics-${VERSION_TAG}"
+
+          if aws ecr describe-images --repository-name "${COUNSELING_ANALYTICS_REPOSITORY}" --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
+            echo "Skip push: ${REPO}:${IMAGE_TAG} already exists."
+          else
+            docker build --platform linux/amd64               -t "${REPO}:${IMAGE_TAG}"               .
+            docker push "${REPO}:${IMAGE_TAG}"
+          fi
+
   deploy-ecs:
     runs-on: ubuntu-latest
     needs:
@@ -607,6 +795,8 @@ jobs:
       - create-github-release
       - build-and-push-api-server
       - build-and-push-admin-web
+      - build-and-push-worker
+      - build-and-push-counseling-analytics
 
     if: |
       always() &&
@@ -614,7 +804,14 @@ jobs:
       needs.create-tag.result == 'success' &&
       needs.create-github-release.result == 'success' &&
       (needs.build-and-push-api-server.result == 'success' || needs.build-and-push-api-server.result == 'skipped') &&
-      (needs.build-and-push-admin-web.result == 'success' || needs.build-and-push-admin-web.result == 'skipped')
+      (needs.build-and-push-admin-web.result == 'success' || needs.build-and-push-admin-web.result == 'skipped') &&
+      (needs.build-and-push-worker.result == 'success' || needs.build-and-push-worker.result == 'skipped') &&
+      (needs.build-and-push-counseling-analytics.result == 'success' || needs.build-and-push-counseling-analytics.result == 'skipped') &&
+      (
+        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:api-server') ||
+        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:admin-web') ||
+        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:customer-web')
+      )
     steps:
       - name: Checkout infra repo
         uses: actions/checkout@v4
@@ -743,3 +940,272 @@ jobs:
           echo "admin_api_image_tag=${{ steps.deploy-ecs.outputs.admin_api_image_tag }}"
           echo "customer_api_image_tag=${{ steps.deploy-ecs.outputs.customer_api_image_tag }}"
           echo "admin_web_image_tag=${{ steps.deploy-ecs.outputs.admin_web_image_tag }}"
+
+  run-worker-task:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-context
+      - create-tag
+      - build-and-push-worker
+      - deploy-ecs
+    if: |
+      always() &&
+      contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:worker') &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
+      needs.build-and-push-worker.result == 'success' &&
+      (needs.deploy-ecs.result == 'success' || needs.deploy-ecs.result == 'skipped')
+    outputs:
+      worker_task_arn: ${{ steps.run-task.outputs.worker_task_arn }}
+      worker_task_definition: ${{ steps.run-task.outputs.worker_task_definition }}
+      worker_image: ${{ steps.run-task.outputs.worker_image }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register worker task definition revision and run task
+        id: run-task
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WORKER_REPOSITORY:-}" ]; then
+            echo "::error::WORKER_REPOSITORY secret is required for deploy:worker"
+            exit 1
+          fi
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          WORKER_IMAGE="${REGISTRY}/${WORKER_REPOSITORY}:worker-${RELEASE_TAG}"
+
+          source_taskdef="${WORKER_TASK_DEFINITION_ARN:-}"
+          if [ -z "$source_taskdef" ]; then
+            if [ -z "${WORKER_TASK_DEFINITION_FAMILY:-}" ]; then
+              echo "::error::Set WORKER_TASK_DEFINITION_ARN or WORKER_TASK_DEFINITION_FAMILY secret."
+              exit 1
+            fi
+            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$WORKER_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
+          fi
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "::error::Could not resolve worker task definition."
+            exit 1
+          fi
+
+          cluster_name="${WORKER_CLUSTER_NAME:-}"
+          if [ -z "$cluster_name" ]; then
+            cluster_name="$(aws cloudformation describe-stack-resources               --region "$AWS_REGION"               --stack-name EcsClusterStack               --query "StackResources[?ResourceType=='AWS::ECS::Cluster']|[0].PhysicalResourceId"               --output text 2>/dev/null || true)"
+          fi
+
+          if [ -z "$cluster_name" ] || [ "$cluster_name" = "None" ]; then
+            echo "::error::Could not resolve ECS cluster name for worker run-task."
+            exit 1
+          fi
+
+          subnet_csv="${WORKER_SUBNET_IDS:-}"
+          sg_csv="${WORKER_SECURITY_GROUP_IDS:-}"
+          assign_public_ip="${WORKER_ASSIGN_PUBLIC_IP:-DISABLED}"
+
+          if [ -z "$subnet_csv" ] || [ -z "$sg_csv" ]; then
+            service_arn="$(aws cloudformation describe-stack-resources               --region "$AWS_REGION"               --stack-name EcsClusterStack               --query "StackResources[?ResourceType=='AWS::ECS::Service']|[0].PhysicalResourceId"               --output text 2>/dev/null || true)"
+
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              echo "::error::Could not infer network from ECS service. Set WORKER_SUBNET_IDS/WORKER_SECURITY_GROUP_IDS secrets."
+              exit 1
+            fi
+
+            service_cluster="$(echo "$service_arn" | awk -F'/' '{print $(NF-1)}')"
+            service_name="$(echo "$service_arn" | awk -F'/' '{print $NF}')"
+
+            awsvpc_json="$(aws ecs describe-services               --region "$AWS_REGION"               --cluster "$service_cluster"               --services "$service_name"               --query 'services[0].networkConfiguration.awsvpcConfiguration'               --output json)"
+
+            subnet_csv="$(echo "$awsvpc_json" | jq -r '.subnets | join(",")')"
+            sg_csv="$(echo "$awsvpc_json" | jq -r '.securityGroups | join(",")')"
+            inferred_assign_public_ip="$(echo "$awsvpc_json" | jq -r '.assignPublicIp // "DISABLED"')"
+
+            if [ -z "${WORKER_ASSIGN_PUBLIC_IP:-}" ]; then
+              assign_public_ip="$inferred_assign_public_ip"
+            fi
+          fi
+
+          if [ -z "$subnet_csv" ] || [ "$subnet_csv" = "null" ] || [ -z "$sg_csv" ] || [ "$sg_csv" = "null" ]; then
+            echo "::error::Invalid network config for worker run-task."
+            exit 1
+          fi
+
+          assign_public_ip="$(echo "$assign_public_ip" | tr '[:lower:]' '[:upper:]')"
+          if [ "$assign_public_ip" != "ENABLED" ] && [ "$assign_public_ip" != "DISABLED" ]; then
+            assign_public_ip="DISABLED"
+          fi
+
+          container_name="${WORKER_CONTAINER_NAME:-worker}"
+
+          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$container_name"             '
+            .containerDefinitions |= (
+              if any(.[]; .name == $cname)
+              then map(if .name == $cname then .image = $img else . end)
+              else (.[0].image = $img | .)
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            ' )"
+
+          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+
+          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+            echo "::error::Failed to register worker task definition revision."
+            exit 1
+          fi
+
+          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
+
+          echo "$run_result"
+
+          failures_count="$(echo "$run_result" | jq '.failures | length')"
+          if [ "$failures_count" -gt 0 ]; then
+            echo "::error::ecs run-task failed: $run_result"
+            exit 1
+          fi
+
+          task_arn="$(echo "$run_result" | jq -r '.tasks[0] // empty')"
+          if [ -z "$task_arn" ]; then
+            echo "::error::ecs run-task returned no task ARN"
+            exit 1
+          fi
+
+          {
+            echo "worker_image=$WORKER_IMAGE"
+            echo "worker_task_definition=$new_taskdef_arn"
+            echo "worker_task_arn=$task_arn"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "worker_image=${{ steps.run-task.outputs.worker_image }}"
+          echo "worker_task_definition=${{ steps.run-task.outputs.worker_task_definition }}"
+          echo "worker_task_arn=${{ steps.run-task.outputs.worker_task_arn }}"
+
+  deploy-counseling-analytics-service:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-context
+      - create-tag
+      - build-and-push-counseling-analytics
+      - deploy-ecs
+    if: |
+      always() &&
+      contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:counseling-analytics') &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
+      needs.build-and-push-counseling-analytics.result == 'success' &&
+      (needs.deploy-ecs.result == 'success' || needs.deploy-ecs.result == 'skipped')
+    outputs:
+      counseling_service_name: ${{ steps.deploy-service.outputs.counseling_service_name }}
+      counseling_task_definition: ${{ steps.deploy-service.outputs.counseling_task_definition }}
+      counseling_image: ${{ steps.deploy-service.outputs.counseling_image }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register task definition revision and update counseling analytics service
+        id: deploy-service
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
+            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
+            exit 1
+          fi
+          if [ -z "${COUNSELING_ANALYTICS_CLUSTER_NAME:-}" ]; then
+            echo "::error::COUNSELING_ANALYTICS_CLUSTER_NAME secret is required"
+            exit 1
+          fi
+          if [ -z "${COUNSELING_ANALYTICS_SERVICE_NAME:-}" ]; then
+            echo "::error::COUNSELING_ANALYTICS_SERVICE_NAME secret is required"
+            exit 1
+          fi
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
+
+          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          if [ -z "$source_taskdef" ]; then
+            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
+              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
+              exit 1
+            fi
+            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
+          fi
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "::error::Could not resolve task definition for counseling analytics"
+            exit 1
+          fi
+
+          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-counseling-analytics}"
+
+          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$IMAGE_URI"             --arg cname "$container_name"             '
+            .containerDefinitions |= (
+              if any(.[]; .name == $cname)
+              then map(if .name == $cname then .image = $img else . end)
+              else (.[0].image = $img | .)
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            ' )"
+
+          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+
+          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+            echo "::error::Failed to register task definition revision"
+            exit 1
+          fi
+
+          aws ecs update-service             --region "$AWS_REGION"             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME"             --service "$COUNSELING_ANALYTICS_SERVICE_NAME"             --task-definition "$new_taskdef_arn"             --force-new-deployment >/dev/null
+
+          aws ecs wait services-stable             --region "$AWS_REGION"             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME"             --services "$COUNSELING_ANALYTICS_SERVICE_NAME"
+
+          {
+            echo "counseling_service_name=$COUNSELING_ANALYTICS_SERVICE_NAME"
+            echo "counseling_task_definition=$new_taskdef_arn"
+            echo "counseling_image=$IMAGE_URI"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "service=${{ steps.deploy-service.outputs.counseling_service_name }}"
+          echo "task_definition=${{ steps.deploy-service.outputs.counseling_task_definition }}"
+          echo "image=${{ steps.deploy-service.outputs.counseling_image }}"
+
