@@ -1,20 +1,14 @@
 package com.myorg;
 
 import com.myorg.config.AppConfig;
+import com.myorg.config.EnvKey;
 import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import com.myorg.props.DnsProps;
 import com.myorg.props.MonitoringStackProps;
-import com.myorg.stacks.AlbStack;
-import com.myorg.stacks.DnsStack;
-import com.myorg.stacks.EcrStack;
-import com.myorg.stacks.EcsClusterStack;
-import com.myorg.stacks.MonitoringStack;
-import com.myorg.stacks.NetworkStack;
-import com.myorg.stacks.RdsStack;
-import com.myorg.stacks.Route53Stack;
+import com.myorg.stacks.*;
 import software.amazon.awscdk.App;
 import software.amazon.awscdk.Environment;
 import software.amazon.awscdk.StackProps;
@@ -35,6 +29,7 @@ public class InfrastructureApp {
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
     private static final String EFS_STACK_ID = "EfsStack";
+    private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
 
     private static final String DEFAULT_DEPLOY_MODE = "route53";
     private static final String DEPLOY_MODE_ROUTE53 = "route53";
@@ -47,7 +42,7 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
     private static final String DEPLOY_MODE_EFS = "efs";
     private static final String DEPLOY_MODE_FULL = "full";
-
+    private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
 
     /**
      * deployMode에 따라 배포할 스택 체인을 선택.
@@ -65,7 +60,8 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
-            //case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
+            case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
+            case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
             default -> throw new IllegalArgumentException("지원하지 않는 deployMode : "
                                                           + deploymentContext.deployMode());
         }
@@ -76,15 +72,15 @@ public class InfrastructureApp {
     /**
      * AWS EFS Stack Deploy
      */
-//    private static void deployEfs(DeploymentContext deploymentContext) {
-//        new EfsStack(
-//                deploymentContext.app(),
-//                EFS_STACK_ID,
-//                deploymentContext.stackProps(),
-//                AppConfig.getEfsTargetVpcId(),
-//                AppConfig.getMonitoringSecurityGroupId()
-//        );
-//    }
+    private static void deployEfs(DeploymentContext deploymentContext) {
+        new EfsStack(
+                deploymentContext.app(),
+                EFS_STACK_ID,
+                deploymentContext.stackProps(),
+                AppConfig.getEfsTargetVpcId(),
+                AppConfig.getMonitoringSecurityGroupId()
+        );
+    }
 
     /**
      * Route53 Hosted Zone 스택 배포
@@ -151,6 +147,18 @@ public class InfrastructureApp {
                 MONITORING_STACK_ID,
                 context.stackProps(),
                 props
+        );
+    }
+
+    /**
+     * Loki용 S3 Bucket Stack 배포
+     */
+    private static void deployLogArchive(DeploymentContext deploymentContext) {
+        new LogArchiveStack(
+                deploymentContext.app(),
+                LOG_ARCHIVE_STACK_ID,
+                deploymentContext.stackProps(),
+                AppConfig.getValueOrDefault(EnvKey.MONITORING_LOKI_S3_BUCKET)
         );
     }
 

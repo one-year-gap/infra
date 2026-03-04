@@ -1,0 +1,10 @@
+apiVersion: 1
+datasources:
+  - name: loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:__LOKIPORT__
+    editable: true
+    jsonData:
+      maxLines: 1000

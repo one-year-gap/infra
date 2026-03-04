@@ -48,6 +48,7 @@ wait_http "${GRAFANA_URL}/api/health"
 wait_http "${PROM_URL}/-/ready"
 
 PROM_DS_UID=$(api GET "/api/datasources/name/prometheus" | jq -r '.uid')
+LOKI_DS_UID=$(api GET "/api/datasources/name/loki" | jq -r '.uid // empty' || true)
 
 # ------------------------ 매트락 전체 목록 수집 ------------------------
 mapfile -t ALL_METRICS < <(curl -fsS "${PROM_URL}/api/v1/label/__name__/values" | jq -r '.data[]' | sort -u)
@@ -235,3 +236,49 @@ build_dashboard "hsc-jvm-micrometer" "JVM (Micrometer) - Auto" "$APP_JOB_REGEX" 
 build_dashboard "hsc-spring-runtime" "Spring Runtime - Auto" "$APP_JOB_REGEX" SPRING_RUNTIME_METRICS
 build_dashboard "hsc-spring-http" "Spring HTTP & App - Auto" "$APP_JOB_REGEX" SPRING_HTTP_METRICS
 build_postgresql_dashboard "hsc-postgresql-exporter" "PostgreSQL Exporter - Auto" "$DB_JOB_REGEX"
+
+# Loki 로그 관측 대시보드(10패널)
+build_loki_dashboard() {
+  local uid="$1";
+  local title="$2";
+  local panels='[]';
+
+  if [ -z "${LOKI_DS_UID:-}" ] || [ "${LOKI_DS_UID}" = "null" ]; then
+    echo "[WARN] Loki datasource not found. Skip Loki dashboard provisioning." >&2
+    return 0
+  fi
+
+  add_ts_panel() {
+    local id="$1"; local x="$2"; local y="$3"; local h="$4"; local w="$5"; local ptitle="$6"; local expr="$7";
+    local panel="";
+    panel=$(jq -n --argjson id "$id" --argjson x "$x" --argjson y "$y" --argjson h "$h" --argjson w "$w" --arg title "$ptitle" --arg expr "$expr" --arg dsUid "$LOKI_DS_UID" \
+      '{id:$id,type:"timeseries",title:$title,datasource:{type:"loki",uid:$dsUid},gridPos:{h:$h,w:$w,x:$x,y:$y},targets:[{refId:"A",expr:$expr,queryType:"range"}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+  }
+
+  add_logs_panel() {
+    local id="$1"; local x="$2"; local y="$3"; local h="$4"; local w="$5"; local ptitle="$6"; local expr="$7";
+    local panel="";
+    panel=$(jq -n --argjson id "$id" --argjson x "$x" --argjson y "$y" --argjson h "$h" --argjson w "$w" --arg title "$ptitle" --arg expr "$expr" --arg dsUid "$LOKI_DS_UID" \
+      '{id:$id,type:"logs",title:$title,datasource:{type:"loki",uid:$dsUid},gridPos:{h:$h,w:$w,x:$x,y:$y},targets:[{refId:"A",expr:$expr,queryType:"range"}],options:{dedupStrategy:"none",enableLogDetails:true,prettifyLogMessage:false,showCommonLabels:false,showLabels:true,showTime:true,sortOrder:"Descending",wrapLogMessage:true}}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+  }
+
+  add_ts_panel 1 0 0 7 8 "FATAL Count (1m)" '(sum(count_over_time({source="cloudwatch",job="ecs-cloudwatch",severity=~"(?i)fatal"}[1m])) or vector(0))'
+  add_ts_panel 2 8 0 7 8 "ERROR Count by Service (5m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error"}[5m])) or vector(0))'
+  add_ts_panel 3 16 0 7 8 "WARN Count by Service (10m)" '(sum by (service) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)warn"}[10m])) or vector(0))'
+  add_ts_panel 4 0 7 7 8 "HTTP 5xx by URI (5m)" 'sum by (uri_template) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",status=~"5.."}[5m]))'
+  add_ts_panel 5 8 7 7 8 "Top Error Code (30m)" '(topk(10, sum by (error_code) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",error_code!=""}[30m]))) or vector(0))'
+  add_ts_panel 6 16 7 7 8 "Parse Error Count (5m)" '(sum(count_over_time({source="cloudwatch",job="ecs-cloudwatch",parse_error="true"}[5m])) or vector(0))'
+  add_ts_panel 7 0 14 7 12 "ERROR/FATAL by Team (15m)" '(sum by (team) (count_over_time({source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error|fatal"}[15m])) or vector(0))'
+  add_ts_panel 8 12 14 7 12 "Requests by Method/URI (5m)" 'sum by (method,uri_template) (count_over_time({source="cloudwatch",job="ecs-cloudwatch"}[5m]))'
+  add_logs_panel 9 0 21 10 12 "Live ERROR/FATAL Logs" '{source="cloudwatch",job="ecs-cloudwatch",level=~"(?i)error|fatal"}'
+  add_logs_panel 10 12 21 10 12 "Live 5xx Request Logs" '{source="cloudwatch",job="ecs-cloudwatch",status=~"5.."}'
+
+  local payload="";
+  payload=$(jq -n --arg uid "$uid" --arg title "$title" --argjson panels "$panels" \
+    '{dashboard:{uid:$uid,title:$title,schemaVersion:39,version:1,refresh:"10s",timezone:"browser",tags:["hsc","loki","logs"],editable:true,panels:$panels},overwrite:true}')
+  api POST "/api/dashboards/db" "$payload" >/dev/null
+}
+
+build_loki_dashboard "hsc-loki-cloudwatch" "Loki CloudWatch Errors - Auto"
