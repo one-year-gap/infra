@@ -1,0 +1,92 @@
+# Alloy Config 파일
+#
+# 목적:
+# - CloudWatch Log Group -> Alloy(OTel receiver) -> Loki 수집
+# - AWS CloudWatch receiver는 experimental 컴포넌트이므로
+#   부팅 스크립트에서 `alloy run --stability.level=experimental`로 실행해야 함.
+
+otelcol.receiver.awscloudwatch "ecs" {
+  region = "__REGION__"
+
+  logs {
+    poll_interval          = "30s"
+    max_events_per_request = 1000
+
+    groups {
+__ALLOYECSLOGGROUPSBLOCKS__
+    }
+  }
+
+  output {
+    logs = [otelcol.processor.transform.cloudwatch_to_loki.input]
+  }
+}
+
+otelcol.processor.transform "cloudwatch_to_loki" {
+  error_mode = "ignore"
+
+  log_statements {
+    context = "log"
+    statements = [
+      // 1차 파싱: awscloudwatch envelope 파싱
+      `merge_maps(cache, ParseJSON(body), "upsert") where IsMatch(body, "^\\{")`,
+
+      // envelope body가 JSON 문자열이면 본문으로 치환
+      `set(body, cache["body"]) where cache["body"] != nil and IsMatch(cache["body"], "^\\{")`,
+
+      // 2차 파싱: 애플리케이션 JSON 파싱
+      `merge_maps(cache, ParseJSON(body), "upsert") where IsMatch(body, "^\\{")`,
+
+      // Explore에서 envelope 대신 앱 메시지가 바로 보이도록 본문 치환
+      `set(body, cache["message"]) where cache["message"] != nil`,
+
+      // 공통 라벨
+      `set(attributes["env"], "__ALLOYLOGENV__")`,
+      `set(attributes["source"], "cloudwatch")`,
+      `set(attributes["job"], "ecs-cloudwatch")`,
+
+      // 파싱 상태: level 또는 message를 추출했으면 파싱 성공으로 간주
+      `set(attributes["parse_error"], "false") where cache["level"] != nil or cache["message"] != nil`,
+      `set(attributes["parse_error"], "true") where cache["level"] == nil and cache["message"] == nil`,
+
+      // LogFieldKeys 매핑
+      `set(attributes["level"], cache["level"])`,
+      `set(attributes["severity"], cache["severity"]) where cache["severity"] != nil`,
+      `set(attributes["severity"], cache["level"]) where cache["severity"] == nil and cache["level"] != nil`,
+      `set(attributes["service"], cache["service"])`,
+      `set(attributes["team"], cache["team"])`,
+      `set(attributes["error_code"], cache["errorCode"])`,
+      `set(attributes["error_type"], cache["errorType"])`,
+      `set(attributes["method"], cache["method"])`,
+      `set(attributes["status"], cache["status"])`,
+      `set(attributes["version"], cache["version"])`,
+      `set(attributes["event"], cache["event"])`,
+      `set(attributes["outcome"], cache["outcome"])`,
+      `set(attributes["duration_ms"], cache["durationMs"])`,
+      `set(attributes["trace_id"], cache["traceId"])`,
+      `set(attributes["request_id"], cache["requestId"])`,
+      `set(attributes["uri_template"], cache["uriTemplate"])`,
+
+      // 애플리케이션이 5xx를 INFO access log로 남기는 경우를 위한 승격
+      `set(attributes["level"], "ERROR") where cache["status"] != nil and IsMatch(cache["status"], "^5..$")`,
+      `set(attributes["severity"], "error") where cache["status"] != nil and IsMatch(cache["status"], "^5..$")`,
+
+      // 고카디널리티(trace_id/request_id)는 라벨에서 제외
+      `set(attributes["loki.attribute.labels"], "env,source,job,parse_error,level,severity,service,team,error_code,error_type,status,method,uri_template")`,
+    ]
+  }
+
+  output {
+    logs = [otelcol.exporter.loki.to_loki.input]
+  }
+}
+
+otelcol.exporter.loki "to_loki" {
+  forward_to = [loki.write.main.receiver]
+}
+
+loki.write "main" {
+  endpoint {
+    url = "http://__LOKICONTAINERNAME__:3100/loki/api/v1/push"
+  }
+}

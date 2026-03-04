@@ -1,0 +1,51 @@
+# Loki Config 파일
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: info
+
+common:
+  path_prefix: /loki
+  replication_factor: 1 #single-binary 운영
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2025-01-01
+      store: tsdb
+      object_store: s3
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+storage_config:
+  aws:
+    region: __REGION__
+    bucketnames: __LOKIS3BUCKET__
+  tsdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/index_cache
+
+# Log 보관 기간
+limits_config:
+  retention_period: __LOKIFATALRETENTIONHOURS__h
+  retention_stream:
+    - selector: '{level=~"(?i)(trace|debug)"}'
+      period: __LOKITRACEDEBUGRETENTIONHOURS__h
+    - selector: '{level=~"(?i)warn"}'
+      period: __LOKIWARNRETENTIONHOURS__h
+    - selector: '{level=~"(?i)error"}'
+      period: __LOKIERRORRETENTIONHOURS__h
+    - selector: '{severity=~"(?i)fatal"}'
+      period: __LOKIFATALRETENTIONHOURS__h
+
+compactor:
+  working_directory: /loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  delete_request_store: s3

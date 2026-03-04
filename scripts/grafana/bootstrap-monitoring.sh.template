@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # =======================================================
 # bootstrap-monitoring.sh
-# Prometheus + pg_exporter Container 가동
+# Prometheus + pg_exporter + Loki + Alloy 가동
+# 기본값은 "기존 컨테이너 보존" 모드로 동작
 # =======================================================
 
 set -euo pipefail
 
 REGION="__REGION__"
 DB_SECRET_ID="__DBSECRETID__"
-# =======================================================
-# ------------------------ Secrets Manager에서 RDS 접속 정보 조회 ------------------------
+RECREATE_CORE_CONTAINERS="${RECREATE_CORE_CONTAINERS:-false}"
+RECREATE_LOKI_STACK="${RECREATE_LOKI_STACK:-false}"
+ENABLE_LOKI_STACK="${ENABLE_LOKI_STACK:-true}"
+ENABLE_ALLOY="${ENABLE_ALLOY:-true}"
+
 SECRET_JSON=$(aws --region "$REGION" secretsmanager get-secret-value --secret-id "$DB_SECRET_ID" --query SecretString --output text)
 
 DB_HOST=$(echo "$SECRET_JSON" | jq -r '.host')
@@ -17,22 +21,51 @@ DB_PORT=$(echo "$SECRET_JSON" | jq -r '.port')
 DB_NAME=$(echo "$SECRET_JSON" | jq -r '.dbname')
 DB_USER=$(echo "$SECRET_JSON" | jq -r '.username')
 DB_PASSWORD=$(echo "$SECRET_JSON" | jq -r '.password')
+DB_USER_ENC=$(printf '%s' "$DB_USER" | jq -sRr @uri)
+DB_PASSWORD_ENC=$(printf '%s' "$DB_PASSWORD" | jq -sRr @uri)
+PG_EXPORTER_DSN="postgresql://${DB_USER_ENC}:${DB_PASSWORD_ENC}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=require"
 
-# ------------------------ Docker Network ------------------------
 docker network create __DOCKERNETWORKNAME__ >/dev/null 2>&1 || true
 
-# ------------------------ pg_exporter ------------------------
-docker rm -f __PGEXPORTERCONTAINERNAME__ __PROMETHEUSCONTAINERNAME__ >/dev/null 2>&1 || true
+container_exists() {
+  docker ps -a --format '{{.Names}}' | grep -Fxq "$1"
+}
 
-docker run -d --name __PGEXPORTERCONTAINERNAME__ --restart unless-stopped \
+container_running() {
+  docker ps --format '{{.Names}}' | grep -Fxq "$1"
+}
+
+ensure_started_or_run() {
+  local name="$1"
+  shift
+
+  if container_running "$name"; then
+    echo "[INFO] Container already running: $name"
+    return 0
+  fi
+
+  if container_exists "$name"; then
+    echo "[INFO] Starting existing container: $name"
+    docker start "$name" >/dev/null
+    return 0
+  fi
+
+  echo "[INFO] Creating container: $name"
+  docker run -d --name "$name" "$@"
+}
+
+mkdir -p __MONITORINGDIR__/loki-data
+
+if [ "$RECREATE_CORE_CONTAINERS" = "true" ]; then
+  docker rm -f __PGEXPORTERCONTAINERNAME__ __PROMETHEUSCONTAINERNAME__ >/dev/null 2>&1 || true
+fi
+
+ensure_started_or_run "__PGEXPORTERCONTAINERNAME__" \
+  --restart unless-stopped \
   --network __DOCKERNETWORKNAME__ \
-  -e PGHOST="$DB_HOST" \
-  -e PGPORT="$DB_PORT" \
-  -e PGDATABASE="$DB_NAME" \
-  -e PGUSER="$DB_USER" \
-  -e PGPASSWORD="$DB_PASSWORD" \
-  -e PGSSLMODE="require" \
+  --log-opt max-size=50m --log-opt max-file=5 \
   __PGEXPORTERIMAGE__ \
+  --dsn "$PG_EXPORTER_DSN" \
   --exclude-databases "__PGEXPORTEREXCLUDEDATABASES__" \
   --collector.locks \
   --collector.database \
@@ -41,9 +74,49 @@ docker run -d --name __PGEXPORTERCONTAINERNAME__ --restart unless-stopped \
   --collector.statements \
   --collector.exporter
 
-# ------------------------ Prometheus ------------------------
-docker run -d --name __PROMETHEUSCONTAINERNAME__ --restart unless-stopped \
+ensure_started_or_run "__PROMETHEUSCONTAINERNAME__" \
+  --restart unless-stopped \
   --network __DOCKERNETWORKNAME__ \
+  --log-opt max-size=50m --log-opt max-file=5 \
   -p 127.0.0.1:__PROMETHEUSPORT__:9090 \
   -v __PROMETHEUSCONFIGPATH__:/etc/prometheus/prometheus.yml:ro \
   __PROMETHEUSIMAGE__
+
+if [ "$ENABLE_LOKI_STACK" != "true" ]; then
+  echo "[INFO] ENABLE_LOKI_STACK=false -> skip Loki/Alloy bootstrap"
+  exit 0
+fi
+
+if [ "$RECREATE_LOKI_STACK" = "true" ]; then
+  docker rm -f __LOKICONTAINERNAME__ __ALLOYCONTAINERNAME__ >/dev/null 2>&1 || true
+fi
+
+ensure_started_or_run "__LOKICONTAINERNAME__" \
+  --restart unless-stopped \
+  --network __DOCKERNETWORKNAME__ \
+  --log-opt max-size=50m --log-opt max-file=5 \
+  -p 127.0.0.1:__LOKIPORT__:3100 \
+  -v __LOKICONFIGPATH__:/etc/loki/config.yaml:ro \
+  -v __MONITORINGDIR__/loki-data:/loki \
+  __LOKIIMAGE__ \
+  -config.file=/etc/loki/config.yaml
+
+if [ "$ENABLE_ALLOY" = "true" ]; then
+  ensure_started_or_run "__ALLOYCONTAINERNAME__" \
+    --restart unless-stopped \
+    --network __DOCKERNETWORKNAME__ \
+    --log-opt max-size=50m --log-opt max-file=5 \
+    -e AWS_REGION=__REGION__ \
+    -v __ALLOYCONFIGPATH__:/etc/alloy/config.alloy:ro \
+    __ALLOYIMAGE__ \
+    run --stability.level=experimental /etc/alloy/config.alloy
+
+  # Alloy 컴포넌트 이슈가 있어도 기존 Grafana/Prometheus 가동은 유지(fail-open)
+  sleep 5
+  if ! container_running "__ALLOYCONTAINERNAME__"; then
+    echo "[WARN] Alloy container is not running. Check logs for awscloudwatch receiver compatibility." >&2
+    docker logs --tail 120 __ALLOYCONTAINERNAME__ >&2 || true
+  fi
+else
+  echo "[INFO] ENABLE_ALLOY=false -> skip Alloy bootstrap"
+fi
