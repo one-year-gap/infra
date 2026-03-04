@@ -39,33 +39,49 @@ otelcol.processor.transform "cloudwatch_to_loki" {
 
       // Explore에서 envelope 대신 앱 메시지가 바로 보이도록 본문 치환
       `set(body, cache["message"]) where cache["message"] != nil`,
+      `set(body, cache["msg"]) where cache["message"] == nil and cache["msg"] != nil`,
+      `set(body, cache["errorMessage"]) where cache["message"] == nil and cache["msg"] == nil and cache["errorMessage"] != nil`,
+      `set(body, cache["error_message"]) where cache["message"] == nil and cache["msg"] == nil and cache["errorMessage"] == nil and cache["error_message"] != nil`,
 
       // 공통 라벨
       `set(attributes["env"], "__ALLOYLOGENV__")`,
       `set(attributes["source"], "cloudwatch")`,
       `set(attributes["job"], "ecs-cloudwatch")`,
 
-      // 파싱 상태: level 또는 message를 추출했으면 파싱 성공으로 간주
-      `set(attributes["parse_error"], "false") where cache["level"] != nil or cache["message"] != nil`,
-      `set(attributes["parse_error"], "true") where cache["level"] == nil and cache["message"] == nil`,
+      // 파싱 상태: level/severity/message 계열 중 하나라도 있으면 성공으로 간주
+      `set(attributes["parse_error"], "false") where cache["level"] != nil or cache["severity"] != nil or cache["logLevel"] != nil or cache["message"] != nil or cache["msg"] != nil or cache["errorMessage"] != nil or cache["error_message"] != nil`,
+      `set(attributes["parse_error"], "true") where cache["level"] == nil and cache["severity"] == nil and cache["logLevel"] == nil and cache["message"] == nil and cache["msg"] == nil and cache["errorMessage"] == nil and cache["error_message"] == nil`,
 
       // LogFieldKeys 매핑
       `set(attributes["level"], cache["level"])`,
+      `set(attributes["level"], cache["severity"]) where cache["level"] == nil and cache["severity"] != nil`,
+      `set(attributes["level"], cache["logLevel"]) where cache["level"] == nil and cache["severity"] == nil and cache["logLevel"] != nil`,
+      `set(attributes["level"], cache["log_level"]) where cache["level"] == nil and cache["severity"] == nil and cache["logLevel"] == nil and cache["log_level"] != nil`,
       `set(attributes["severity"], cache["severity"]) where cache["severity"] != nil`,
       `set(attributes["severity"], cache["level"]) where cache["severity"] == nil and cache["level"] != nil`,
+      `set(attributes["severity"], cache["logLevel"]) where cache["severity"] == nil and cache["level"] == nil and cache["logLevel"] != nil`,
+      `set(attributes["severity"], cache["log_level"]) where cache["severity"] == nil and cache["level"] == nil and cache["logLevel"] == nil and cache["log_level"] != nil`,
       `set(attributes["service"], cache["service"])`,
+      `set(attributes["service"], cache["serviceName"]) where cache["service"] == nil and cache["serviceName"] != nil`,
       `set(attributes["team"], cache["team"])`,
       `set(attributes["error_code"], cache["errorCode"])`,
+      `set(attributes["error_code"], cache["error_code"]) where cache["errorCode"] == nil and cache["error_code"] != nil`,
       `set(attributes["error_type"], cache["errorType"])`,
+      `set(attributes["error_type"], cache["error_type"]) where cache["errorType"] == nil and cache["error_type"] != nil`,
       `set(attributes["method"], cache["method"])`,
+      `set(attributes["method"], cache["httpMethod"]) where cache["method"] == nil and cache["httpMethod"] != nil`,
       `set(attributes["status"], cache["status"])`,
+      `set(attributes["status"], cache["statusCode"]) where cache["status"] == nil and cache["statusCode"] != nil`,
       `set(attributes["version"], cache["version"])`,
       `set(attributes["event"], cache["event"])`,
       `set(attributes["outcome"], cache["outcome"])`,
       `set(attributes["duration_ms"], cache["durationMs"])`,
       `set(attributes["trace_id"], cache["traceId"])`,
+      `set(attributes["trace_id"], cache["trace_id"]) where cache["traceId"] == nil and cache["trace_id"] != nil`,
       `set(attributes["request_id"], cache["requestId"])`,
+      `set(attributes["request_id"], cache["request_id"]) where cache["requestId"] == nil and cache["request_id"] != nil`,
       `set(attributes["uri_template"], cache["uriTemplate"])`,
+      `set(attributes["uri_template"], cache["uri_template"]) where cache["uriTemplate"] == nil and cache["uri_template"] != nil`,
 
       // 애플리케이션이 5xx를 INFO access log로 남기는 경우를 위한 승격
       `set(attributes["level"], "ERROR") where cache["status"] != nil and IsMatch(cache["status"], "^5..$")`,
