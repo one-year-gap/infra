@@ -306,7 +306,7 @@ public record MonitoringConfig(
      */
 
     public String lokiS3BucketArn() {
-        return S3_PREFIX + lokiConfig().lokiS3Bucket();
+        return S3_PREFIX + lokiConfig.lokiS3Bucket();
     }
 
     //Loki가 S3 객체 접근 시 사용할 객체 레벨 ARN 생성
