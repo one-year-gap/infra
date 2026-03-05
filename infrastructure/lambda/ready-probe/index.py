@@ -1,7 +1,7 @@
 import json
 import urllib.request
 import urllib.error
-
+from urllib.parse import urlparse
 
 def _lookup_path(payload, dotted_path):
     # dotted_path 예: checks.modelLoaded
@@ -41,7 +41,9 @@ def handler(event, _context):
 
     if not url:
         raise Exception("url is required")
-
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+         raise ValueError(f"unsupported url scheme: {parsed.scheme}")
     # GET 요청 객체 구성
     request = urllib.request.Request(url, method="GET")
 

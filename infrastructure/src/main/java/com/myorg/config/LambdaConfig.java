@@ -14,7 +14,7 @@ public record LambdaConfig(
 ) {
     public static LambdaConfig fromEnv() {
         return new LambdaConfig(
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_VALIDATOR_LAMBDA_ASSET_PATH),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_PROBE_LAMBDA_ASSET_PATH),
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_PROBE_MEMORY_MB)),
 
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_RUNTIME_GUARD_LAMBDA_ASSET_PATH),

@@ -27,9 +27,9 @@ public final class OnDemandSupportFunctionFactory {
         return new Function(scope, id, FunctionProps.builder()
                 .runtime(Runtime.PYTHON_3_12)
                 .handler("index.handler")
-                .code(Code.fromAsset(config.watchDogConfig().watchdogLambdaAssetPath()))
+                .code(Code.fromAsset(config.lambdaConfig().runtimeGuardLambdaAssetPath()))
                 .timeout(Duration.seconds(30))
-                .memorySize(config.watchDogConfig().watchdogMemoryMb())
+                .memorySize(config.lambdaConfig().runtimeGuardMemoryMb())
                 .build());
     }
 
