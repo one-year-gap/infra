@@ -5,6 +5,7 @@ import com.myorg.config.EnvKey;
 import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
+import com.myorg.config.OnDemandWorkflowConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import com.myorg.props.DnsProps;
 import com.myorg.props.MonitoringStackProps;
@@ -30,6 +31,8 @@ public class InfrastructureApp {
     private static final String DEFAULT_IMAGE_TAG = "latest";
     private static final String EFS_STACK_ID = "EfsStack";
     private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
+    private static final String ON_DEMAND_WORKFLOW_STACK_ID = "OnDemandWorkflowStack";
+    private static final String ON_DEMAND_LOCK_STACK_ID = "OnDemandLockStack";
 
     private static final String DEFAULT_DEPLOY_MODE = "route53";
     private static final String DEPLOY_MODE_ROUTE53 = "route53";
@@ -43,6 +46,8 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_EFS = "efs";
     private static final String DEPLOY_MODE_FULL = "full";
     private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
+    private static final String DEPLOY_MODE_ON_DEMAND_WORKFLOW = "on-demand-workflow";
+    private static final String DEPLOY_MODE_ON_DEMAND_LOCK = "on-demand-lock";
 
     /**
      * deployMode에 따라 배포할 스택 체인을 선택.
@@ -62,6 +67,8 @@ public class InfrastructureApp {
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
             case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
             case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
+            case DEPLOY_MODE_ON_DEMAND_LOCK -> deployOnDemandLock(deploymentContext);
+            case DEPLOY_MODE_ON_DEMAND_WORKFLOW -> deployOnDemandWorkflow(deploymentContext);
             default -> throw new IllegalArgumentException("지원하지 않는 deployMode : "
                                                           + deploymentContext.deployMode());
         }
@@ -159,6 +166,38 @@ public class InfrastructureApp {
                 LOG_ARCHIVE_STACK_ID,
                 deploymentContext.stackProps(),
                 AppConfig.getValueOrDefault(EnvKey.MONITORING_LOKI_S3_BUCKET)
+        );
+    }
+
+    /**
+     * 온디맨드 FastAPI 워크플로우 스택 배포
+     *
+     * <p>주의:
+     * - 이 모드는 기존 ECS 서비스 리소스를 \"재사용(import)\"하는 워크플로우 전용 배포 모드다.
+     * - 필요한 ARN/ID/URL 값은 환경변수(EnvKey.ON_DEMAND_*)로 주입해야 한다.
+     */
+    private static void deployOnDemandWorkflow(DeploymentContext context) {
+        OnDemandWorkflowConfig config = OnDemandWorkflowConfig.fromEnv();
+        new OnDemandWorkflowStack(
+                context.app(),
+                ON_DEMAND_WORKFLOW_STACK_ID,
+                context.stackProps(),
+                config
+        );
+    }
+
+    /**
+     * 온디맨드 워크플로우 락 테이블(DynamoDB) 전용 스택 배포.
+     *
+     * <p>운영 권장:
+     * - 먼저 on-demand-lock 모드로 락 테이블을 생성한다.
+     * - 이후 on-demand-workflow 모드에서 해당 테이블을 import해 사용한다.
+     */
+    private static void deployOnDemandLock(DeploymentContext context) {
+        new OnDemandLockStack(
+                context.app(),
+                ON_DEMAND_LOCK_STACK_ID,
+                context.stackProps()
         );
     }
 
