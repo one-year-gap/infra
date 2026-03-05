@@ -178,12 +178,16 @@ jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
-      source_owner: ${{ steps.resolve.outputs.source_owner }}
-      source_name: ${{ steps.resolve.outputs.source_name }}
+      source_repo_b64: ${{ steps.resolve.outputs.source_repo_b64 }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
-      deploy_labels_json: ${{ steps.resolve.outputs.deploy_labels_json }}
+      deploy_labels_b64: ${{ steps.resolve.outputs.deploy_labels_b64 }}
+      deploy_api_server: ${{ steps.resolve.outputs.deploy_api_server }}
+      deploy_admin_web: ${{ steps.resolve.outputs.deploy_admin_web }}
+      deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
+      deploy_worker: ${{ steps.resolve.outputs.deploy_worker }}
+      deploy_counseling_analytics: ${{ steps.resolve.outputs.deploy_counseling_analytics }}
     steps:
       - name: Resolve source + labels
         id: resolve
@@ -336,34 +340,42 @@ jobs:
 
             const releaseLevel = releaseLabel.replace("release:", "");
 
-            core.setOutput("source_owner",      owner);
-            core.setOutput("source_name",       repo);
+            const sourceRepoB64 = Buffer.from(full, "utf8").toString("base64");
+            const deployLabelsB64 = Buffer.from(JSON.stringify(deployLabels), "utf8").toString("base64");
+
+            core.setOutput("source_repo_b64", sourceRepoB64);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
-            core.setOutput("deploy_labels_json", JSON.stringify(deployLabels));
+            core.setOutput("deploy_labels_b64", deployLabelsB64);
+            core.setOutput("deploy_api_server", deployLabels.includes("deploy:api-server") ? "true" : "false");
+            core.setOutput("deploy_admin_web", deployLabels.includes("deploy:admin-web") ? "true" : "false");
+            core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
+            core.setOutput("deploy_worker", deployLabels.includes("deploy:worker") ? "true" : "false");
+            core.setOutput("deploy_counseling_analytics", deployLabels.includes("deploy:counseling-analytics") ? "true" : "false");
 
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_owner != '' && needs.resolve-context.outputs.source_name != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_b64 != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
     steps:
       - name: Guard required outputs
+        id: guard-source
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [ -z "${SOURCE_OWNER}" ] || [ -z "${SOURCE_NAME}" ]; then
-            echo "::error::resolve-context outputs source_owner/source_name are empty. Aborting to prevent checkout fallback to current repo."
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          if [ -z "${SOURCE_REPO}" ] || [[ "${SOURCE_REPO}" != */* ]]; then
+            echo "::error::resolve-context output source_repo_b64 is empty/invalid. Aborting to prevent checkout fallback to current repo."
             exit 1
           fi
-          SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
+          echo "source_repo=${SOURCE_REPO}" >> "$GITHUB_OUTPUT"
           echo "resolved-source-repo=$SOURCE_REPO"
           echo "resolved-source-sha=${SOURCE_SHA:-<empty>}"
 
@@ -371,7 +383,7 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ format('{0}/{1}', needs.resolve-context.outputs.source_owner, needs.resolve-context.outputs.source_name) }}
+          repository: ${{ steps.guard-source.outputs.source_repo }}
           ref: ${{ needs.resolve-context.outputs.source_sha }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
@@ -380,19 +392,17 @@ jobs:
         if: needs.resolve-context.outputs.source_sha == ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ format('{0}/{1}', needs.resolve-context.outputs.source_owner, needs.resolve-context.outputs.source_name) }}
+          repository: ${{ steps.guard-source.outputs.source_repo }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Validate source context
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO: ${{ steps.guard-source.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
           echo "source-repo=$SOURCE_REPO"
           echo "source-sha=${SOURCE_SHA:-<empty>}"
           if [ -n "${SOURCE_SHA}" ]; then
@@ -464,21 +474,25 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_OWNER:       ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME:        ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64:    ${{ needs.resolve-context.outputs.source_repo_b64 }}
           VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
-          DEPLOY_LABELS_JSON: ${{ needs.resolve-context.outputs.deploy_labels_json }}
+          DEPLOY_LABELS_B64:  ${{ needs.resolve-context.outputs.deploy_labels_b64 }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
-            const owner          = process.env.SOURCE_OWNER;
-            const repo           = process.env.SOURCE_NAME;
+            const sourceRepoRaw  = Buffer.from(process.env.SOURCE_REPO_B64 || "", "base64").toString("utf8");
+            const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
             const releaseLabel   = process.env.RELEASE_LABEL;
-            const deployLabels   = JSON.parse(process.env.DEPLOY_LABELS_JSON || "[]");
+            const deployLabelsRaw = Buffer.from(process.env.DEPLOY_LABELS_B64 || "", "base64").toString("utf8");
+            const deployLabels   = JSON.parse(deployLabelsRaw || "[]");
+
+            if (!owner || !repo) {
+              throw new Error(`invalid source repo from source_repo_b64: ${sourceRepoRaw}`);
+            }
 
             try {
               const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
@@ -514,19 +528,19 @@ jobs:
   build-and-push-api-server:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:api-server')
+    if: needs.resolve-context.outputs.deploy_api_server == 'true'
     steps:
       - name: Resolve api-server source repository
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "api-server" ]]; then
-            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -540,8 +554,17 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is api-server
-        if: needs.resolve-context.outputs.source_name == 'api-server' && needs.resolve-context.outputs.source_sha != ''
-        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+        if: needs.resolve-context.outputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          if [[ "${SOURCE_REPO##*/}" == "api-server" ]]; then
+            git checkout "$SOURCE_SHA"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -588,19 +611,19 @@ jobs:
   build-and-push-admin-web:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:admin-web')
+    if: needs.resolve-context.outputs.deploy_admin_web == 'true'
     steps:
       - name: Resolve admin-web source repository
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "admin-fe" ]]; then
-            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -614,8 +637,17 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is admin-web
-        if: needs.resolve-context.outputs.source_name == 'admin-fe' && needs.resolve-context.outputs.source_sha != ''
-        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+        if: needs.resolve-context.outputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          if [[ "${SOURCE_REPO##*/}" == "admin-fe" ]]; then
+            git checkout "$SOURCE_SHA"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -649,7 +681,7 @@ jobs:
   build-and-push-worker:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:worker')
+    if: needs.resolve-context.outputs.deploy_worker == 'true'
     steps:
       - name: Validate worker repository secret
         shell: bash
@@ -664,13 +696,13 @@ jobs:
         id: resolve-worker-repo
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
           DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "worker" ]]; then
-            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -684,8 +716,17 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is worker
-        if: needs.resolve-context.outputs.source_name == 'worker' && needs.resolve-context.outputs.source_sha != ''
-        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+        if: needs.resolve-context.outputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          if [[ "${SOURCE_REPO##*/}" == "worker" ]]; then
+            git checkout "$SOURCE_SHA"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -721,7 +762,7 @@ jobs:
   build-and-push-counseling-analytics:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:counseling-analytics')
+    if: needs.resolve-context.outputs.deploy_counseling_analytics == 'true'
     steps:
       - name: Validate counseling analytics repository secret
         shell: bash
@@ -736,13 +777,13 @@ jobs:
         id: resolve-counseling-repo
         shell: bash
         env:
-          SOURCE_OWNER: ${{ needs.resolve-context.outputs.source_owner }}
-          SOURCE_NAME: ${{ needs.resolve-context.outputs.source_name }}
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
           DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
         run: |
           set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "counseling-analytics" ]]; then
-            SOURCE_REPO="${SOURCE_OWNER}/${SOURCE_NAME}"
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -756,8 +797,17 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is counseling-analytics
-        if: needs.resolve-context.outputs.source_name == 'counseling-analytics' && needs.resolve-context.outputs.source_sha != ''
-        run: git checkout ${{ needs.resolve-context.outputs.source_sha }}
+        if: needs.resolve-context.outputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
+          if [[ "${SOURCE_REPO##*/}" == "counseling-analytics" ]]; then
+            git checkout "$SOURCE_SHA"
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -808,9 +858,9 @@ jobs:
       (needs.build-and-push-worker.result == 'success' || needs.build-and-push-worker.result == 'skipped') &&
       (needs.build-and-push-counseling-analytics.result == 'success' || needs.build-and-push-counseling-analytics.result == 'skipped') &&
       (
-        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:api-server') ||
-        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:admin-web') ||
-        contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:customer-web')
+        needs.resolve-context.outputs.deploy_api_server == 'true' ||
+        needs.resolve-context.outputs.deploy_admin_web == 'true' ||
+        needs.resolve-context.outputs.deploy_customer_web == 'true'
       )
     steps:
       - name: Checkout infra repo
@@ -843,7 +893,8 @@ jobs:
         env:
           DEPLOY_MODE: ecs
           RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
-          DEPLOY_LABELS_JSON: ${{ needs.resolve-context.outputs.deploy_labels_json }}
+          DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
+          DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
         run: |
           set -euo pipefail
 
@@ -912,11 +963,11 @@ jobs:
           ADMIN_API_IMAGE_TAG="$current_admin_api_tag"
           CUSTOMER_API_IMAGE_TAG="$current_customer_api_tag"
 
-          if [[ "$DEPLOY_LABELS_JSON" == *"deploy:admin-web"* ]]; then
+          if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
             ADMIN_WEB_IMAGE_TAG="$RELEASE_TAG"
           fi
 
-          if [[ "$DEPLOY_LABELS_JSON" == *"deploy:api-server"* ]]; then
+          if [ "${DEPLOY_API_SERVER}" = "true" ]; then
             ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
             CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
           fi
@@ -936,7 +987,9 @@ jobs:
       - name: Summary
         run: |
           echo "release=${{ needs.create-tag.outputs.version_tag }}"
-          echo "deploy_labels=${{ needs.resolve-context.outputs.deploy_labels_json }}"
+          echo "deploy_api_server=${{ needs.resolve-context.outputs.deploy_api_server }}"
+          echo "deploy_admin_web=${{ needs.resolve-context.outputs.deploy_admin_web }}"
+          echo "deploy_customer_web=${{ needs.resolve-context.outputs.deploy_customer_web }}"
           echo "admin_api_image_tag=${{ steps.deploy-ecs.outputs.admin_api_image_tag }}"
           echo "customer_api_image_tag=${{ steps.deploy-ecs.outputs.customer_api_image_tag }}"
           echo "admin_web_image_tag=${{ steps.deploy-ecs.outputs.admin_web_image_tag }}"
@@ -1106,7 +1159,7 @@ jobs:
       - deploy-ecs
     if: |
       always() &&
-      contains(needs.resolve-context.outputs.deploy_labels_json, 'deploy:counseling-analytics') &&
+      needs.resolve-context.outputs.deploy_counseling_analytics == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
       needs.build-and-push-counseling-analytics.result == 'success' &&
