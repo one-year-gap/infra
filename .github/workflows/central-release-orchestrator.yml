@@ -188,6 +188,7 @@ jobs:
       deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
       deploy_worker: ${{ steps.resolve.outputs.deploy_worker }}
       deploy_counseling_analytics: ${{ steps.resolve.outputs.deploy_counseling_analytics }}
+      can_deploy_counseling_service: ${{ steps.resolve.outputs.can_deploy_counseling_service }}
     steps:
       - name: Resolve source + labels
         id: resolve
@@ -353,6 +354,14 @@ jobs:
             core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
             core.setOutput("deploy_worker", deployLabels.includes("deploy:worker") ? "true" : "false");
             core.setOutput("deploy_counseling_analytics", deployLabels.includes("deploy:counseling-analytics") ? "true" : "false");
+            core.setOutput(
+              "can_deploy_counseling_service",
+              (
+                process.env.COUNSELING_ANALYTICS_CLUSTER_NAME &&
+                process.env.COUNSELING_ANALYTICS_SERVICE_NAME &&
+                (process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN || process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY)
+              ) ? "true" : "false"
+            );
 
   create-tag:
     runs-on: ubuntu-latest
@@ -830,6 +839,11 @@ jobs:
           REPO="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}"
           IMAGE_TAG="counseling-analytics-${VERSION_TAG}"
 
+          if ! aws ecr describe-repositories --repository-names "${COUNSELING_ANALYTICS_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Create ECR repository: ${COUNSELING_ANALYTICS_REPOSITORY}"
+            aws ecr create-repository --repository-name "${COUNSELING_ANALYTICS_REPOSITORY}" >/dev/null
+          fi
+
           if aws ecr describe-images --repository-name "${COUNSELING_ANALYTICS_REPOSITORY}" --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
             echo "Skip push: ${REPO}:${IMAGE_TAG} already exists."
           else
@@ -1160,6 +1174,7 @@ jobs:
     if: |
       always() &&
       needs.resolve-context.outputs.deploy_counseling_analytics == 'true' &&
+      needs.resolve-context.outputs.can_deploy_counseling_service == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
       needs.build-and-push-counseling-analytics.result == 'success' &&
