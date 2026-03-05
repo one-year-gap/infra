@@ -6,6 +6,7 @@ import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.config.PortConfig;
 import com.myorg.config.OnDemandWorkflowConfig;
+import com.myorg.config.WafConfig;
 import com.myorg.props.ApplicationLoadBalancerProps;
 import com.myorg.props.DnsProps;
 import com.myorg.props.MonitoringStackProps;
@@ -26,6 +27,7 @@ public class InfrastructureApp {
     private static final String RDS_STACK_ID = "RdsStack";
     private static final String ECS_CLUSTER_STACK_ID = "EcsClusterStack";
     private static final String ALB_STACK_ID = "AlbStack";
+    private static final String ALB_WAF_STACK_ID = "AlbWafStack";
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
@@ -41,6 +43,7 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_RDS = "rds";
     private static final String DEPLOY_MODE_ECS = "ecs";
     private static final String DEPLOY_MODE_ALB = "alb";
+    private static final String DEPLOY_MODE_ALB_WAF = "alb-waf";
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
     private static final String DEPLOY_MODE_EFS = "efs";
@@ -63,6 +66,7 @@ public class InfrastructureApp {
             case DEPLOY_MODE_RDS -> deployRds(deploymentContext);
             case DEPLOY_MODE_ECS -> deployEcs(deploymentContext);
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
+            case DEPLOY_MODE_ALB_WAF -> deployAlbWaf(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
             case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
@@ -132,7 +136,18 @@ public class InfrastructureApp {
     private static void deployAlb(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
         EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
-        createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
+    }
+
+    /**
+     * ALB + WAF 스택 배포
+     */
+    private static void deployAlbWaf(DeploymentContext context) {
+        BaseStacks baseStacks = createBaseStacks(context);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
     }
 
     /**
@@ -208,6 +223,7 @@ public class InfrastructureApp {
         BaseStacks baseStacks = createBaseStacks(context);
         EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
         createDnsStack(context, albStack);
     }
 
@@ -322,6 +338,20 @@ public class InfrastructureApp {
                         customerCert,
                         adminCert
                 )
+        );
+    }
+
+    /**
+     * ALB 앞단 WAF 스택 생성
+     */
+    private static AlbWafStack createAlbWafStack(DeploymentContext context, AlbStack albStack) {
+        return new AlbWafStack(
+                context.app(),
+                ALB_WAF_STACK_ID,
+                context.stackProps(),
+                albStack.getCustomerAlb(),
+                albStack.getAdminAlb(),
+                WafConfig.fromEnv()
         );
     }
 
