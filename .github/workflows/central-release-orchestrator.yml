@@ -191,6 +191,7 @@ jobs:
       deploy_worker: ${{ steps.resolve.outputs.deploy_worker }}
       deploy_counseling_analytics: ${{ steps.resolve.outputs.deploy_counseling_analytics }}
       can_deploy_counseling_service: ${{ steps.resolve.outputs.can_deploy_counseling_service }}
+      ci_run_worker_task: ${{ steps.resolve.outputs.ci_run_worker_task }}
     steps:
       - name: Resolve source + labels
         id: resolve
@@ -360,6 +361,10 @@ jobs:
                 process.env.COUNSELING_ANALYTICS_SERVICE_NAME &&
                 (process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN || process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY)
               ) ? "true" : "false"
+            );
+            core.setOutput(
+              "ci_run_worker_task",
+              String(process.env.CI_RUN_WORKER_TASK || "").trim().toLowerCase() === "true" ? "true" : "false"
             );
 
   create-tag:
@@ -1041,7 +1046,7 @@ jobs:
     # 실행 책임은 Step Functions가 기본이며, CI 직접 실행은 CI_RUN_WORKER_TASK=true일 때만 허용한다.
     if: |
       always() &&
-      env.CI_RUN_WORKER_TASK == 'true' &&
+      needs.resolve-context.outputs.ci_run_worker_task == 'true' &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
@@ -1340,7 +1345,7 @@ jobs:
       - run-worker-task
     if: |
       always() &&
-      env.CI_RUN_WORKER_TASK == 'true' &&
+      needs.resolve-context.outputs.ci_run_worker_task == 'true' &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
       needs.run-worker-task.result == 'success'
     steps:
