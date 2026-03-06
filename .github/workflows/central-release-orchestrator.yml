@@ -1050,6 +1050,7 @@ jobs:
       worker_image: ${{ steps.run-task.outputs.worker_image }}
       worker_cluster_name: ${{ steps.run-task.outputs.worker_cluster_name }}
       worker_container_name: ${{ steps.run-task.outputs.worker_container_name }}
+      worker_started_by: ${{ steps.run-task.outputs.worker_started_by }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -1241,6 +1242,7 @@ jobs:
           fi
 
           container_name="${WORKER_CONTAINER_NAME:-worker}"
+          run_started_by="worker-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
 
@@ -1297,7 +1299,7 @@ jobs:
             }'
           )"
 
-          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --overrides "$run_overrides"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
+          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --started-by "$run_started_by"             --overrides "$run_overrides"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
 
           echo "$run_result"
 
@@ -1319,6 +1321,7 @@ jobs:
             echo "worker_task_arn=$task_arn"
             echo "worker_cluster_name=$cluster_name"
             echo "worker_container_name=$effective_container_name"
+            echo "worker_started_by=$run_started_by"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -1349,13 +1352,9 @@ jobs:
           WORKER_TASK_ARN: ${{ needs.run-worker-task.outputs.worker_task_arn }}
           WORKER_CLUSTER_FROM_JOB: ${{ needs.run-worker-task.outputs.worker_cluster_name }}
           WORKER_CONTAINER_FROM_JOB: ${{ needs.run-worker-task.outputs.worker_container_name }}
+          WORKER_STARTED_BY: ${{ needs.run-worker-task.outputs.worker_started_by }}
         run: |
           set -euo pipefail
-
-          if [ -z "${WORKER_TASK_ARN:-}" ]; then
-            echo "::error::Missing worker task arn"
-            exit 1
-          fi
 
           cluster_name="${WORKER_CLUSTER_FROM_JOB:-${WORKER_CLUSTER_NAME:-}}"
           if [ -z "$cluster_name" ]; then
@@ -1363,6 +1362,32 @@ jobs:
           fi
           if [ -z "$cluster_name" ]; then
             echo "::error::Could not resolve worker cluster name"
+            exit 1
+          fi
+
+          if [ -z "${WORKER_TASK_ARN:-}" ] && [ -n "${WORKER_STARTED_BY:-}" ]; then
+            echo "Resolve worker task ARN via startedBy=${WORKER_STARTED_BY}"
+            WORKER_TASK_ARN="$(aws ecs list-tasks \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --started-by "$WORKER_STARTED_BY" \
+              --desired-status RUNNING \
+              --query 'taskArns[0]' \
+              --output text 2>/dev/null || true)"
+
+            if [ -z "$WORKER_TASK_ARN" ] || [ "$WORKER_TASK_ARN" = "None" ]; then
+              WORKER_TASK_ARN="$(aws ecs list-tasks \
+                --region "$AWS_REGION" \
+                --cluster "$cluster_name" \
+                --started-by "$WORKER_STARTED_BY" \
+                --desired-status STOPPED \
+                --query 'taskArns[0]' \
+                --output text 2>/dev/null || true)"
+            fi
+          fi
+
+          if [ -z "${WORKER_TASK_ARN:-}" ] || [ "${WORKER_TASK_ARN}" = "None" ]; then
+            echo "::error::Missing worker task arn"
             exit 1
           fi
 
