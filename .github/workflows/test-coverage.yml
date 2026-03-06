@@ -30,7 +30,10 @@ on:
         type: string
         required: false
         default: "postgres"
-
+      aws-secretsmanager-enabled:
+        type: boolean
+        required: false
+        default: false
       # thresholds are ratios (0.0 ~ 1.0)
       min-line-overall:
         type: number
@@ -134,8 +137,11 @@ jobs:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/${{ inputs['db-name'] }}
           SPRING_DATASOURCE_USERNAME: ${{ inputs['db-user'] }}
           SPRING_DATASOURCE_PASSWORD: ${{ inputs['db-password'] }}
+          SPRING_CLOUD_AWS_SECRETSMANAGER_ENABLED: ${{ inputs['aws-secretsmanager-enabled'] }}
+          SPRING_CLOUD_AWS_ENABLED: ${{ inputs['aws-secretsmanager-enabled'] }}
+          AWS_EC2_METADATA_DISABLED: "true"  
         run: ./gradlew ${{ inputs['gradle-args'] }}
-
+        
       - name: Upload JaCoCo HTML report
         if: always()
         uses: actions/upload-artifact@v4
