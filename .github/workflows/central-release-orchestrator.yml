@@ -1122,6 +1122,44 @@ jobs:
             echo ""
           }
 
+          resolve_taskdef_from_service_template() {
+            local service_rows=""
+            local service_arn=""
+            local service_cluster=""
+            local service_name=""
+            local taskdef=""
+
+            service_rows="$(aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Service'].[LogicalResourceId,PhysicalResourceId]" \
+              --output text 2>/dev/null || true)"
+
+            service_arn="$(echo "$service_rows" | awk '$1 ~ /^CustomerApiService/ {print $2; exit}')"
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              service_arn="$(echo "$service_rows" | awk '$1 ~ /^AdminApiService/ {print $2; exit}')"
+            fi
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              service_arn="$(echo "$service_rows" | awk 'NR==1 {print $2; exit}')"
+            fi
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              echo ""
+              return
+            fi
+
+            service_cluster="$(echo "$service_arn" | awk -F'/' '{print $(NF-1)}')"
+            service_name="$(echo "$service_arn" | awk -F'/' '{print $NF}')"
+
+            taskdef="$(aws ecs describe-services \
+              --region "$AWS_REGION" \
+              --cluster "$service_cluster" \
+              --services "$service_name" \
+              --query 'services[0].taskDefinition' \
+              --output text 2>/dev/null || true)"
+
+            echo "$taskdef"
+          }
+
           source_taskdef="${WORKER_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
             if [ -n "${WORKER_TASK_DEFINITION_FAMILY:-}" ]; then
@@ -1132,6 +1170,11 @@ jobs:
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
             echo "Try resolving worker task definition by image repository scan: ${worker_repository}"
             source_taskdef="$(resolve_taskdef_by_repo_scan "$worker_repository")"
+          fi
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "Try resolving worker task definition from existing ECS service template"
+            source_taskdef="$(resolve_taskdef_from_service_template)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
