@@ -50,8 +50,6 @@ on:
         required: false
       WORKER_ASSIGN_PUBLIC_IP:
         required: false
-      WORKER_BATCH_JOB_NAME:
-        required: false
       COUNSELING_ANALYTICS_REPOSITORY:
         required: false
       COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:
@@ -151,7 +149,6 @@ env:
   WORKER_SUBNET_IDS: ${{ secrets.WORKER_SUBNET_IDS }}
   WORKER_SECURITY_GROUP_IDS: ${{ secrets.WORKER_SECURITY_GROUP_IDS }}
   WORKER_ASSIGN_PUBLIC_IP: ${{ secrets.WORKER_ASSIGN_PUBLIC_IP }}
-  WORKER_BATCH_JOB_NAME: ${{ secrets.WORKER_BATCH_JOB_NAME }}
   COUNSELING_ANALYTICS_REPOSITORY: ${{ secrets.COUNSELING_ANALYTICS_REPOSITORY }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
@@ -1190,7 +1187,6 @@ jobs:
           fi
 
           container_name="${WORKER_CONTAINER_NAME:-worker}"
-          worker_batch_job_name="${WORKER_BATCH_JOB_NAME:-testJob}"
 
           taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
 
@@ -1221,7 +1217,6 @@ jobs:
 
           run_overrides="$(jq -cn \
             --arg cname "$container_name" \
-            --arg batchJobName "$worker_batch_job_name" \
             --arg runId "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --arg releaseTag "$RELEASE_TAG" \
             '{
@@ -1229,7 +1224,6 @@ jobs:
                 {
                   name: $cname,
                   environment: [
-                    {name: "SPRING_BATCH_JOB_NAME", value: $batchJobName},
                     {name: "RUN_ID", value: $runId},
                     {name: "RELEASE_TAG", value: $releaseTag}
                   ]
