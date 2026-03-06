@@ -104,6 +104,7 @@ jobs:
             END IF;
           END
           $$;
+          ALTER ROLE db_migrator SUPERUSER;
           SQL
         env:
           PGPASSWORD: ${{ inputs['db-password'] }}
