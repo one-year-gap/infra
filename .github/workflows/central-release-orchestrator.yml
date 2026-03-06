@@ -1015,10 +1015,14 @@ jobs:
       - create-tag
       - build-and-push-worker
       - deploy-ecs
-    # 실행 책임을 Step Functions로 완전히 위임하기 위해
-    # CI에서 직접 worker task(run-task)를 호출하는 경로를 비활성화한다.
-    # (배포 파이프라인은 이미지 빌드/푸시 및 인프라 반영만 수행)
-    if: ${{ false }}
+    # deploy:worker 라벨이 붙은 릴리스에서만 worker run-task를 실행한다.
+    if: |
+      always() &&
+      needs.resolve-context.outputs.deploy_worker == 'true' &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
+      needs.build-and-push-worker.result == 'success' &&
+      (needs.deploy-ecs.result == 'success' || needs.deploy-ecs.result == 'skipped')
     outputs:
       worker_task_arn: ${{ steps.run-task.outputs.worker_task_arn }}
       worker_task_definition: ${{ steps.run-task.outputs.worker_task_definition }}
