@@ -26,6 +26,10 @@ on:
         type: string
         required: false
         default: "postgres"
+      postgres-image:
+        type: string
+        required: false
+        default: "pgvector/pgvector:pg16"
       db-password:
         type: string
         required: false
@@ -71,7 +75,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: ${{ inputs['postgres-image'] }}
         env:
           POSTGRES_DB: ${{ inputs['db-name'] }}
           POSTGRES_USER: ${{ inputs['db-user'] }}
@@ -108,6 +112,7 @@ jobs:
           END
           $$;
           ALTER ROLE db_migrator SUPERUSER;
+          CREATE EXTENSION IF NOT EXISTS vector;
           SQL
         env:
           PGPASSWORD: ${{ inputs['db-password'] }}
