@@ -149,6 +149,8 @@ env:
   WORKER_SUBNET_IDS: ${{ secrets.WORKER_SUBNET_IDS }}
   WORKER_SECURITY_GROUP_IDS: ${{ secrets.WORKER_SECURITY_GROUP_IDS }}
   WORKER_ASSIGN_PUBLIC_IP: ${{ secrets.WORKER_ASSIGN_PUBLIC_IP }}
+  # 기본값은 비활성(빈 값)로 두고, 필요할 때만 secret 값을 true로 설정해 CI worker 실행을 켠다.
+  CI_RUN_WORKER_TASK: ${{ secrets.CI_RUN_WORKER_TASK }}
   COUNSELING_ANALYTICS_REPOSITORY: ${{ secrets.COUNSELING_ANALYTICS_REPOSITORY }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
@@ -1036,9 +1038,10 @@ jobs:
       - create-tag
       - build-and-push-worker
       - deploy-ecs
-    # deploy:worker 라벨이 붙은 릴리스에서만 worker run-task를 실행한다.
+    # 실행 책임은 Step Functions가 기본이며, CI 직접 실행은 CI_RUN_WORKER_TASK=true일 때만 허용한다.
     if: |
       always() &&
+      env.CI_RUN_WORKER_TASK == 'true' &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
@@ -1337,6 +1340,7 @@ jobs:
       - run-worker-task
     if: |
       always() &&
+      env.CI_RUN_WORKER_TASK == 'true' &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
       needs.run-worker-task.result == 'success'
     steps:

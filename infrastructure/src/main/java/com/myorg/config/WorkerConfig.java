@@ -39,14 +39,19 @@ public record WorkerConfig(
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_ARN),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_CONTAINER_NAME),
 
-                parsingToList(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_PROBE_SUBNET_IDS)),
+                parsingToList(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SUBNET_IDS)),
                 parsingToList(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SECURITY_GROUP_IDS))
         );
     }
 
     private static List<String> parsingToList(String origin){
+        if (origin == null || origin.isBlank()) {
+            return List.of();
+        }
         String[] parsing = origin.replaceAll(" ","").split(",");
-
-        return Arrays.stream(parsing).toList();
+        return Arrays.stream(parsing)
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
     }
 }
