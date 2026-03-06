@@ -50,6 +50,8 @@ on:
         required: false
       WORKER_ASSIGN_PUBLIC_IP:
         required: false
+      WORKER_BATCH_JOB_NAME:
+        required: false
       COUNSELING_ANALYTICS_REPOSITORY:
         required: false
       COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:
@@ -149,6 +151,7 @@ env:
   WORKER_SUBNET_IDS: ${{ secrets.WORKER_SUBNET_IDS }}
   WORKER_SECURITY_GROUP_IDS: ${{ secrets.WORKER_SECURITY_GROUP_IDS }}
   WORKER_ASSIGN_PUBLIC_IP: ${{ secrets.WORKER_ASSIGN_PUBLIC_IP }}
+  WORKER_BATCH_JOB_NAME: ${{ secrets.WORKER_BATCH_JOB_NAME }}
   COUNSELING_ANALYTICS_REPOSITORY: ${{ secrets.COUNSELING_ANALYTICS_REPOSITORY }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
@@ -692,14 +695,17 @@ jobs:
     needs: [resolve-context, create-tag]
     if: needs.resolve-context.outputs.deploy_worker == 'true'
     steps:
-      - name: Validate worker repository secret
+      - name: Resolve worker ECR repository
+        id: resolve-worker-ecr-repo
         shell: bash
         run: |
           set -euo pipefail
-          if [ -z "${WORKER_REPOSITORY:-}" ]; then
-            echo "::error::WORKER_REPOSITORY secret is required for deploy:worker"
+          worker_repository="${WORKER_REPOSITORY:-${WORKER_SOURCE_REPO:-}}"
+          if [ -z "$worker_repository" ]; then
+            echo "::error::WORKER_REPOSITORY secret is empty and WORKER_SOURCE_REPO fallback is unavailable"
             exit 1
           fi
+          echo "worker_repository=$worker_repository" >> "$GITHUB_OUTPUT"
 
       - name: Resolve worker source repository
         id: resolve-worker-repo
@@ -750,15 +756,22 @@ jobs:
         shell: bash
         env:
           VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          WORKER_REPOSITORY_RESOLVED: ${{ steps.resolve-worker-ecr-repo.outputs.worker_repository }}
         run: |
           set -euo pipefail
 
+          worker_repository="${WORKER_REPOSITORY_RESOLVED}"
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          REPO="${REGISTRY}/${WORKER_REPOSITORY}"
+          REPO="${REGISTRY}/${worker_repository}"
           WORKER_TAG="worker-${VERSION_TAG}"
 
-          if aws ecr describe-images --repository-name "${WORKER_REPOSITORY}" --image-ids imageTag="${WORKER_TAG}" >/dev/null 2>&1; then
+          if ! aws ecr describe-repositories --repository-names "${worker_repository}" >/dev/null 2>&1; then
+            echo "Create ECR repository: ${worker_repository}"
+            aws ecr create-repository --repository-name "${worker_repository}" >/dev/null
+          fi
+
+          if aws ecr describe-images --repository-name "${worker_repository}" --image-ids imageTag="${WORKER_TAG}" >/dev/null 2>&1; then
             echo "Skip push: ${REPO}:${WORKER_TAG} already exists."
           else
             docker build --platform linux/amd64 \
@@ -1015,14 +1028,20 @@ jobs:
       - create-tag
       - build-and-push-worker
       - deploy-ecs
-    # 실행 책임을 Step Functions로 완전히 위임하기 위해
-    # CI에서 직접 worker task(run-task)를 호출하는 경로를 비활성화한다.
-    # (배포 파이프라인은 이미지 빌드/푸시 및 인프라 반영만 수행)
-    if: ${{ false }}
+    # deploy:worker 라벨이 붙은 릴리스에서만 worker run-task를 실행한다.
+    if: |
+      always() &&
+      needs.resolve-context.outputs.deploy_worker == 'true' &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
+      needs.build-and-push-worker.result == 'success' &&
+      (needs.deploy-ecs.result == 'success' || needs.deploy-ecs.result == 'skipped')
     outputs:
       worker_task_arn: ${{ steps.run-task.outputs.worker_task_arn }}
       worker_task_definition: ${{ steps.run-task.outputs.worker_task_definition }}
       worker_image: ${{ steps.run-task.outputs.worker_image }}
+      worker_cluster_name: ${{ steps.run-task.outputs.worker_cluster_name }}
+      worker_container_name: ${{ steps.run-task.outputs.worker_container_name }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -1038,26 +1057,77 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${WORKER_REPOSITORY:-}" ]; then
-            echo "::error::WORKER_REPOSITORY secret is required for deploy:worker"
+          worker_repository="${WORKER_REPOSITORY:-${WORKER_SOURCE_REPO:-}}"
+          if [ -z "$worker_repository" ]; then
+            echo "::error::WORKER_REPOSITORY secret is empty and WORKER_SOURCE_REPO fallback is unavailable"
             exit 1
           fi
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          WORKER_IMAGE="${REGISTRY}/${WORKER_REPOSITORY}:worker-${RELEASE_TAG}"
+          WORKER_IMAGE="${REGISTRY}/${worker_repository}:worker-${RELEASE_TAG}"
+
+          if ! aws ecr describe-images --repository-name "${worker_repository}" --image-ids imageTag="worker-${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "::error::Worker image does not exist: ${WORKER_IMAGE}"
+            exit 1
+          fi
+
+          resolve_taskdef_from_family() {
+            local family="$1"
+            aws ecs list-task-definitions \
+              --region "$AWS_REGION" \
+              --family-prefix "$family" \
+              --status ACTIVE \
+              --sort DESC \
+              --max-items 1 \
+              --query 'taskDefinitionArns[0]' \
+              --output text 2>/dev/null || true
+          }
+
+          resolve_taskdef_by_repo_scan() {
+            local repo="$1"
+            local candidate=""
+            local images=""
+
+            while read -r candidate; do
+              [ -z "$candidate" ] && continue
+              [ "$candidate" = "None" ] && continue
+
+              images="$(aws ecs describe-task-definition \
+                --region "$AWS_REGION" \
+                --task-definition "$candidate" \
+                --query 'taskDefinition.containerDefinitions[].image' \
+                --output text 2>/dev/null || true)"
+
+              if echo "$images" | tr '\t' '\n' | grep -Eq "/${repo}(:|@)"; then
+                echo "$candidate"
+                return
+              fi
+            done < <(aws ecs list-task-definitions \
+              --region "$AWS_REGION" \
+              --status ACTIVE \
+              --sort DESC \
+              --max-items 200 \
+              --query 'taskDefinitionArns' \
+              --output text | tr '\t' '\n')
+
+            echo ""
+          }
 
           source_taskdef="${WORKER_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
-            if [ -z "${WORKER_TASK_DEFINITION_FAMILY:-}" ]; then
-              echo "::error::Set WORKER_TASK_DEFINITION_ARN or WORKER_TASK_DEFINITION_FAMILY secret."
-              exit 1
+            if [ -n "${WORKER_TASK_DEFINITION_FAMILY:-}" ]; then
+              source_taskdef="$(resolve_taskdef_from_family "$WORKER_TASK_DEFINITION_FAMILY")"
             fi
-            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$WORKER_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
-            echo "::error::Could not resolve worker task definition."
+            echo "Try resolving worker task definition by image repository scan: ${worker_repository}"
+            source_taskdef="$(resolve_taskdef_by_repo_scan "$worker_repository")"
+          fi
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "::error::Could not resolve worker task definition. Set WORKER_TASK_DEFINITION_ARN or WORKER_TASK_DEFINITION_FAMILY."
             exit 1
           fi
 
@@ -1076,7 +1146,19 @@ jobs:
           assign_public_ip="${WORKER_ASSIGN_PUBLIC_IP:-DISABLED}"
 
           if [ -z "$subnet_csv" ] || [ -z "$sg_csv" ]; then
-            service_arn="$(aws cloudformation describe-stack-resources               --region "$AWS_REGION"               --stack-name EcsClusterStack               --query "StackResources[?ResourceType=='AWS::ECS::Service']|[0].PhysicalResourceId"               --output text 2>/dev/null || true)"
+            service_rows="$(aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Service'].[LogicalResourceId,PhysicalResourceId]" \
+              --output text 2>/dev/null || true)"
+
+            service_arn="$(echo "$service_rows" | awk '$1 ~ /^CustomerApiService/ {print $2; exit}')"
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              service_arn="$(echo "$service_rows" | awk '$1 ~ /^AdminApiService/ {print $2; exit}')"
+            fi
+            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
+              service_arn="$(echo "$service_rows" | awk 'NR==1 {print $2; exit}')"
+            fi
 
             if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
               echo "::error::Could not infer network from ECS service. Set WORKER_SUBNET_IDS/WORKER_SECURITY_GROUP_IDS secrets."
@@ -1108,6 +1190,7 @@ jobs:
           fi
 
           container_name="${WORKER_CONTAINER_NAME:-worker}"
+          worker_batch_job_name="${WORKER_BATCH_JOB_NAME:-testJob}"
 
           taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
 
@@ -1136,7 +1219,26 @@ jobs:
             exit 1
           fi
 
-          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
+          run_overrides="$(jq -cn \
+            --arg cname "$container_name" \
+            --arg batchJobName "$worker_batch_job_name" \
+            --arg runId "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --arg releaseTag "$RELEASE_TAG" \
+            '{
+              containerOverrides: [
+                {
+                  name: $cname,
+                  environment: [
+                    {name: "SPRING_BATCH_JOB_NAME", value: $batchJobName},
+                    {name: "RUN_ID", value: $runId},
+                    {name: "RELEASE_TAG", value: $releaseTag}
+                  ]
+                }
+              ]
+            }'
+          )"
+
+          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --overrides "$run_overrides"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
 
           echo "$run_result"
 
@@ -1156,6 +1258,8 @@ jobs:
             echo "worker_image=$WORKER_IMAGE"
             echo "worker_task_definition=$new_taskdef_arn"
             echo "worker_task_arn=$task_arn"
+            echo "worker_cluster_name=$cluster_name"
+            echo "worker_container_name=$container_name"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -1163,6 +1267,87 @@ jobs:
           echo "worker_image=${{ steps.run-task.outputs.worker_image }}"
           echo "worker_task_definition=${{ steps.run-task.outputs.worker_task_definition }}"
           echo "worker_task_arn=${{ steps.run-task.outputs.worker_task_arn }}"
+
+  verify-worker-task:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-context
+      - run-worker-task
+    if: |
+      always() &&
+      needs.resolve-context.outputs.deploy_worker == 'true' &&
+      needs.run-worker-task.result == 'success'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait worker task to stop and verify exit code
+        shell: bash
+        env:
+          WORKER_TASK_ARN: ${{ needs.run-worker-task.outputs.worker_task_arn }}
+          WORKER_CLUSTER_FROM_JOB: ${{ needs.run-worker-task.outputs.worker_cluster_name }}
+          WORKER_CONTAINER_FROM_JOB: ${{ needs.run-worker-task.outputs.worker_container_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WORKER_TASK_ARN:-}" ]; then
+            echo "::error::Missing worker task arn"
+            exit 1
+          fi
+
+          cluster_name="${WORKER_CLUSTER_FROM_JOB:-${WORKER_CLUSTER_NAME:-}}"
+          if [ -z "$cluster_name" ]; then
+            cluster_name="$(echo "$WORKER_TASK_ARN" | awk -F'/' '{print $(NF-1)}')"
+          fi
+          if [ -z "$cluster_name" ]; then
+            echo "::error::Could not resolve worker cluster name"
+            exit 1
+          fi
+
+          container_name="${WORKER_CONTAINER_FROM_JOB:-${WORKER_CONTAINER_NAME:-worker}}"
+
+          max_attempts=180
+          poll_seconds=10
+          task_desc=""
+          for ((i=1; i<=max_attempts; i++)); do
+            task_desc="$(aws ecs describe-tasks \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --tasks "$WORKER_TASK_ARN" \
+              --query 'tasks[0]' \
+              --output json)"
+
+            last_status="$(echo "$task_desc" | jq -r '.lastStatus // "UNKNOWN"')"
+            echo "[$i/$max_attempts] worker task status=${last_status}"
+
+            if [ "$last_status" = "STOPPED" ]; then
+              break
+            fi
+
+            sleep "$poll_seconds"
+          done
+
+          final_status="$(echo "$task_desc" | jq -r '.lastStatus // "UNKNOWN"')"
+          if [ "$final_status" != "STOPPED" ]; then
+            echo "::error::Timed out waiting worker task to stop"
+            exit 1
+          fi
+
+          exit_code="$(echo "$task_desc" | jq -r --arg cname "$container_name" '([.containers[] | select(.name == $cname) | .exitCode][0] // .containers[0].exitCode // "")')"
+          stop_code="$(echo "$task_desc" | jq -r '.stopCode // ""')"
+          stopped_reason="$(echo "$task_desc" | jq -r '.stoppedReason // ""')"
+
+          echo "worker_task_exit_code=${exit_code}"
+          echo "worker_task_stop_code=${stop_code}"
+          echo "worker_task_stopped_reason=${stopped_reason}"
+
+          if [ -z "$exit_code" ] || [ "$exit_code" != "0" ]; then
+            echo "::error::Worker task failed. exitCode=${exit_code:-none}, stopCode=${stop_code}, reason=${stopped_reason}"
+            exit 1
+          fi
 
   deploy-counseling-analytics-service:
     runs-on: ubuntu-latest
