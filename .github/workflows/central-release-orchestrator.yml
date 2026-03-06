@@ -1244,7 +1244,18 @@ jobs:
 
           taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
 
-          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$container_name"             '
+          effective_container_name="$container_name"
+          if ! echo "$taskdef_json" | jq -e --arg cname "$container_name" 'any(.containerDefinitions[]; .name == $cname)' >/dev/null; then
+            fallback_container_name="$(echo "$taskdef_json" | jq -r '.containerDefinitions[0].name // empty')"
+            if [ -z "$fallback_container_name" ]; then
+              echo "::error::Could not determine container name from source task definition."
+              exit 1
+            fi
+            echo "Container '${container_name}' not found in source task definition. Use '${fallback_container_name}' as override target."
+            effective_container_name="$fallback_container_name"
+          fi
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$effective_container_name"             '
             .containerDefinitions |= (
               if any(.[]; .name == $cname)
               then map(if .name == $cname then .image = $img else . end)
@@ -1270,7 +1281,7 @@ jobs:
           fi
 
           run_overrides="$(jq -cn \
-            --arg cname "$container_name" \
+            --arg cname "$effective_container_name" \
             --arg runId "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --arg releaseTag "$RELEASE_TAG" \
             '{
@@ -1307,7 +1318,7 @@ jobs:
             echo "worker_task_definition=$new_taskdef_arn"
             echo "worker_task_arn=$task_arn"
             echo "worker_cluster_name=$cluster_name"
-            echo "worker_container_name=$container_name"
+            echo "worker_container_name=$effective_container_name"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
