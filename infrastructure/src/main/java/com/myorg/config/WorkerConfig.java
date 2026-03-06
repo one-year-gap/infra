@@ -39,19 +39,29 @@ public record WorkerConfig(
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_ARN),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_CONTAINER_NAME),
 
-                parsingToList(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SUBNET_IDS)),
-                parsingToList(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SECURITY_GROUP_IDS))
+                parsingToNonEmptyList(
+                        AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SUBNET_IDS),
+                        EnvKey.ON_DEMAND_WORKER_SUBNET_IDS.key()
+                ),
+                parsingToNonEmptyList(
+                        AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SECURITY_GROUP_IDS),
+                        EnvKey.ON_DEMAND_WORKER_SECURITY_GROUP_IDS.key()
+                )
         );
     }
 
-    private static List<String> parsingToList(String origin){
+    private static List<String> parsingToNonEmptyList(String origin, String key){
         if (origin == null || origin.isBlank()) {
-            return List.of();
+            throw new IllegalStateException(key + " 값이 비어 있습니다.");
         }
         String[] parsing = origin.replaceAll(" ","").split(",");
-        return Arrays.stream(parsing)
+        List<String> values = Arrays.stream(parsing)
                 .map(String::trim)
                 .filter(s -> !s.isBlank())
                 .toList();
+        if (values.isEmpty()) {
+            throw new IllegalStateException(key + " 값이 비어 있습니다.");
+        }
+        return values;
     }
 }
