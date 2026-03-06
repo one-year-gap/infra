@@ -178,11 +178,11 @@ jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
-      source_repo_b64: ${{ steps.resolve.outputs.source_repo_b64 }}
+      source_repo: ${{ steps.resolve.outputs.source_repo }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
-      deploy_labels_b64: ${{ steps.resolve.outputs.deploy_labels_b64 }}
+      deploy_labels_csv: ${{ steps.resolve.outputs.deploy_labels_csv }}
       deploy_api_server: ${{ steps.resolve.outputs.deploy_api_server }}
       deploy_admin_web: ${{ steps.resolve.outputs.deploy_admin_web }}
       deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
@@ -341,14 +341,11 @@ jobs:
 
             const releaseLevel = releaseLabel.replace("release:", "");
 
-            const sourceRepoB64 = Buffer.from(full, "utf8").toString("base64");
-            const deployLabelsB64 = Buffer.from(JSON.stringify(deployLabels), "utf8").toString("base64");
-
-            core.setOutput("source_repo_b64", sourceRepoB64);
+            core.setOutput("source_repo", full);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
-            core.setOutput("deploy_labels_b64", deployLabelsB64);
+            core.setOutput("deploy_labels_csv", deployLabels.join(","));
             core.setOutput("deploy_api_server", deployLabels.includes("deploy:api-server") ? "true" : "false");
             core.setOutput("deploy_admin_web", deployLabels.includes("deploy:admin-web") ? "true" : "false");
             core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
@@ -366,7 +363,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_b64 != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -375,13 +372,12 @@ jobs:
         id: guard-source
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           if [ -z "${SOURCE_REPO}" ] || [[ "${SOURCE_REPO}" != */* ]]; then
-            echo "::error::resolve-context output source_repo_b64 is empty/invalid. Aborting to prevent checkout fallback to current repo."
+            echo "::error::resolve-context output source_repo is empty/invalid. Aborting to prevent checkout fallback to current repo."
             exit 1
           fi
           echo "source_repo=${SOURCE_REPO}" >> "$GITHUB_OUTPUT"
@@ -483,24 +479,26 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO_B64:    ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO:        ${{ needs.resolve-context.outputs.source_repo }}
           VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
-          DEPLOY_LABELS_B64:  ${{ needs.resolve-context.outputs.deploy_labels_b64 }}
+          DEPLOY_LABELS_CSV:  ${{ needs.resolve-context.outputs.deploy_labels_csv }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
-            const sourceRepoRaw  = Buffer.from(process.env.SOURCE_REPO_B64 || "", "base64").toString("utf8");
+            const sourceRepoRaw  = String(process.env.SOURCE_REPO || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
             const releaseLabel   = process.env.RELEASE_LABEL;
-            const deployLabelsRaw = Buffer.from(process.env.DEPLOY_LABELS_B64 || "", "base64").toString("utf8");
-            const deployLabels   = JSON.parse(deployLabelsRaw || "[]");
+            const deployLabels   = String(process.env.DEPLOY_LABELS_CSV || "")
+              .split(",")
+              .map(v => v.trim())
+              .filter(Boolean);
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo from source_repo_b64: ${sourceRepoRaw}`);
+              throw new Error(`invalid source repo from source_repo: ${sourceRepoRaw}`);
             }
 
             try {
@@ -543,11 +541,10 @@ jobs:
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "api-server" ]]; then
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
@@ -566,11 +563,10 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           if [[ "${SOURCE_REPO##*/}" == "api-server" ]]; then
             git checkout "$SOURCE_SHA"
           fi
@@ -626,11 +622,10 @@ jobs:
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "admin-fe" ]]; then
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
@@ -649,11 +644,10 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           if [[ "${SOURCE_REPO##*/}" == "admin-fe" ]]; then
             git checkout "$SOURCE_SHA"
           fi
@@ -708,11 +702,10 @@ jobs:
         id: resolve-worker-repo
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "worker" ]]; then
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
@@ -731,11 +724,10 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           if [[ "${SOURCE_REPO##*/}" == "worker" ]]; then
             git checkout "$SOURCE_SHA"
           fi
@@ -796,11 +788,10 @@ jobs:
         id: resolve-counseling-repo
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           SOURCE_NAME="${SOURCE_REPO##*/}"
           if [[ "$SOURCE_NAME" == "counseling-analytics" ]]; then
             echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
@@ -819,11 +810,10 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_B64: ${{ needs.resolve-context.outputs.source_repo_b64 }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          SOURCE_REPO="$(printf '%s' "${SOURCE_REPO_B64}" | base64 --decode)"
           if [[ "${SOURCE_REPO##*/}" == "counseling-analytics" ]]; then
             git checkout "$SOURCE_SHA"
           fi
