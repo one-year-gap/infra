@@ -58,6 +58,12 @@ on:
         required: false
       COUNSELING_ANALYTICS_CONTAINER_NAME:
         required: false
+      ON_DEMAND_WORKER_TASK_DEFINITION_ARN:
+        required: false
+      ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:
+        required: false
+      ON_DEMAND_WORKER_CONTAINER_NAME:
+        required: false
       COUNSELING_ANALYTICS_CLUSTER_NAME:
         required: false
       COUNSELING_ANALYTICS_SERVICE_NAME:
@@ -155,6 +161,9 @@ env:
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
   COUNSELING_ANALYTICS_CONTAINER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CONTAINER_NAME }}
+  ON_DEMAND_WORKER_TASK_DEFINITION_ARN: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_ARN }}
+  ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY }}
+  ON_DEMAND_WORKER_CONTAINER_NAME: ${{ secrets.ON_DEMAND_WORKER_CONTAINER_NAME }}
   COUNSELING_ANALYTICS_CLUSTER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CLUSTER_NAME }}
   COUNSELING_ANALYTICS_SERVICE_NAME: ${{ secrets.COUNSELING_ANALYTICS_SERVICE_NAME }}
   DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
@@ -1725,15 +1734,16 @@ jobs:
             exit 1
           fi
 
-          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          source_taskdef="${ON_DEMAND_WORKER_TASK_DEFINITION_ARN:-${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}}"
           if [ -z "$source_taskdef" ]; then
-            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
-              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
+            taskdef_family="${ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:-${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}}"
+            if [ -z "$taskdef_family" ]; then
+              echo "::error::Set ON_DEMAND_WORKER_TASK_DEFINITION_ARN or ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY (fallback: COUNSELING_ANALYTICS_TASK_DEFINITION_ARN/FAMILY)"
               exit 1
             fi
             source_taskdef="$(aws ecs list-task-definitions \
               --region "$AWS_REGION" \
-              --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY" \
+              --family-prefix "$taskdef_family" \
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
@@ -1748,7 +1758,7 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
-          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
+          container_name="${ON_DEMAND_WORKER_CONTAINER_NAME:-${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}}"
 
           taskdef_json="$(aws ecs describe-task-definition \
             --region "$AWS_REGION" \
