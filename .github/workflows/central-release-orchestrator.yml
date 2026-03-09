@@ -174,7 +174,7 @@ env:
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
   WORKER_SOURCE_REPO: one-year-gap/worker
-  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/counseling-analytics
+  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/intelligence-server
 
 jobs:
   resolve-context:
@@ -233,6 +233,13 @@ jobs:
                 .split(",")
                 .map(v => v.trim())
                 .filter(Boolean);
+            }
+
+            function canonicalSourceRepoName(repoName) {
+              if (repoName === "counseling-analytics" || repoName === "intelligence-server") {
+                return "counseling-analytics";
+              }
+              return repoName;
             }
 
             function resolveTagNamespace(repoName, deployLabels) {
@@ -391,10 +398,11 @@ jobs:
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
 
+            const sourceRepoName = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
-            const tagNamespace = resolveTagNamespace(repo, deployLabels);
+            const tagNamespace = resolveTagNamespace(sourceRepoName, deployLabels);
 
-            core.setOutput("source_repo_name", repo);
+            core.setOutput("source_repo_name", sourceRepoName);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
