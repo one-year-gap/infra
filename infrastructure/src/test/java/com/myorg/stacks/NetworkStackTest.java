@@ -21,6 +21,7 @@ class NetworkStackTest {
     private String adminApiSgLogicalId;
     private String dbSgLogicalId;
     private static final int MSK_IAM_PORT = 9098;
+    private static final int RECOMMENDATION_REALTIME_PORT = 8000;
 
     private static final List<String> allowedIpsList = List.of(
             "203.0.113.10/32",
@@ -264,6 +265,12 @@ class NetworkStackTest {
             assertEgressToSecurityGroup(customerApiSgLogicalId, dbSgLogicalId, 5432);
             assertNoEgressCidrOnPort(customerApiSgLogicalId, "tcp", 5432);
         }
+
+        @Test
+        @DisplayName("MSK IAM 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToKafkaBroker() {
+            assertEgressToSecurityGroup(customerApiSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
+        }
     }
 
     @Nested
@@ -274,6 +281,18 @@ class NetworkStackTest {
         void shouldAllowOutboundToKafkaBrokerOnly() {
             assertEgressToSecurityGroup(recommendationRealtimeSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
         }
+
+        @Test
+        @DisplayName("Admin API에서만 recommendation 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromAdminApiOnly() {
+            assertIngressFromSecurityGroup(recommendationRealtimeSgLogicalId, adminApiSgLogicalId, RECOMMENDATION_REALTIME_PORT);
+        }
+
+        @Test
+        @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToAdminApi() {
+            assertEgressToSecurityGroup(recommendationRealtimeSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
+        }
     }
 
     @Nested
@@ -283,6 +302,18 @@ class NetworkStackTest {
         @DisplayName("Recommendation Realtime에서만 MSK IAM 포트 인바운드를 허용한다")
         void shouldAllowInboundFromRecommendationRealtimeOnly() {
             assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, recommendationRealtimeSgLogicalId, MSK_IAM_PORT);
+        }
+
+        @Test
+        @DisplayName("Customer API에서 MSK IAM 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromCustomerApi() {
+            assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, customerApiSgLogicalId, MSK_IAM_PORT);
+        }
+
+        @Test
+        @DisplayName("Admin API에서 MSK IAM 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromAdminApi() {
+            assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, adminApiSgLogicalId, MSK_IAM_PORT);
         }
     }
     @Nested
@@ -349,6 +380,24 @@ class NetworkStackTest {
         void shouldAllowDbOutboundToDbSecurityGroupOnly() {
             assertEgressToSecurityGroup(adminApiSgLogicalId, dbSgLogicalId, 5432);
             assertNoEgressCidrOnPort(adminApiSgLogicalId, "tcp", 5432);
+        }
+
+        @Test
+        @DisplayName("MSK IAM 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToKafkaBroker() {
+            assertEgressToSecurityGroup(adminApiSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
+        }
+
+        @Test
+        @DisplayName("Recommendation Realtime 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToRecommendationRealtime() {
+            assertEgressToSecurityGroup(adminApiSgLogicalId, recommendationRealtimeSgLogicalId, RECOMMENDATION_REALTIME_PORT);
+        }
+
+        @Test
+        @DisplayName("Recommendation Realtime에서 adminServerPort 인바운드를 허용한다")
+        void shouldAllowInboundFromRecommendationRealtime() {
+            assertIngressFromSecurityGroup(adminApiSgLogicalId, recommendationRealtimeSgLogicalId, ADMIN_SERVER_PORT);
         }
     }
 

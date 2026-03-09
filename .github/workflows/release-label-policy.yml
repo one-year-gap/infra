@@ -25,7 +25,18 @@ jobs:
             }
 
             const releaseLabels = ["release:major", "release:minor", "release:patch"];
-            const deployLabels = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web", "deploy:worker", "deploy:counseling-analytics"];
+            const deployLabels = [
+              "deploy:admin-web",
+              "deploy:api-server",
+              "deploy:customer-web",
+              "deploy:worker",
+              "deploy:recommendation-server",
+              "deploy:analysis-server",
+              // Backward compatibility for existing PR labels during migration.
+              "deploy:counseling-analytics",
+              "deploy:recommendation-realtime",
+              "deploy:counseling-batch"
+            ];
 
             const selectedRelease = releaseLabels.filter(l => labels.includes(l));
             const selectedDeploy = deployLabels.filter(l => labels.includes(l));

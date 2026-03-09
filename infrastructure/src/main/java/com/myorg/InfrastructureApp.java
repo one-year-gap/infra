@@ -115,7 +115,8 @@ public class InfrastructureApp {
      */
     private static void deployEcs(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        createEcsClusterStack(context, baseStacks);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        createEcsClusterStack(context, baseStacks, mskStack);
     }
 
     /**
@@ -123,7 +124,8 @@ public class InfrastructureApp {
      */
     private static void deployAlb(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
     }
@@ -133,7 +135,8 @@ public class InfrastructureApp {
      */
     private static void deployAlbWaf(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
     }
@@ -167,7 +170,8 @@ public class InfrastructureApp {
         // NetworkStack을 참조하는 기존 스택들을 함께 synth해서
         // cross-stack export가 제거되지 않도록 현재 그래프를 유지한다.
         BaseStacks baseStacks = createBaseStacks(context);
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
         createDnsStack(context, albStack);
@@ -188,13 +192,7 @@ public class InfrastructureApp {
                 monitoringProps
         );
 
-        new MskStack(
-                context.app(),
-                MSK_STACK_ID,
-                context.stackProps(),
-                baseStacks.networkStack().getVpc(),
-                baseStacks.networkStack().getKafkaBrokerSg()
-        );
+        mskStack.getNode().addDependency(baseStacks.networkStack());
     }
 
     /**
@@ -210,11 +208,11 @@ public class InfrastructureApp {
     }
 
     /**
-     * 온디맨드 FastAPI 워크플로우 스택 배포
+     * analysis-server batch 워크플로우 스택 배포
      *
      * <p>주의:
-     * - 이 모드는 기존 ECS 서비스 리소스를 \"재사용(import)\"하는 워크플로우 전용 배포 모드다.
-     * - 필요한 ARN/ID/URL 값은 환경변수(EnvKey.ON_DEMAND_*)로 주입해야 한다.
+     * - 이 모드는 기존 ECS 클러스터/TaskDefinition 리소스를 \"재사용(import)\"하는 워크플로우 전용 배포 모드다.
+     * - 필요한 값은 환경변수(EnvKey.ON_DEMAND_*)로 주입해야 한다.
      */
     private static void deployOnDemandWorkflow(DeploymentContext context) {
         OnDemandWorkflowConfig config = OnDemandWorkflowConfig.fromEnv();
@@ -227,7 +225,7 @@ public class InfrastructureApp {
     }
 
     /**
-     * 온디맨드 워크플로우 락 테이블(DynamoDB) 전용 스택 배포.
+     * analysis-server batch 선점 락 테이블(DynamoDB) 전용 스택 배포.
      *
      * <p>운영 권장:
      * - 먼저 on-demand-lock 모드로 락 테이블을 생성한다.
@@ -246,7 +244,8 @@ public class InfrastructureApp {
      */
     private static void deployDns(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
         createDnsStack(context, albStack);
@@ -309,7 +308,19 @@ public class InfrastructureApp {
     /**
      * 이미지 태그 +  기반 스택 정보 ECS 스택 생성
      */
-    private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks) {
+    private static MskStack createMskStack(DeploymentContext context, NetworkStack networkStack) {
+        MskStack mskStack = new MskStack(
+                context.app(),
+                MSK_STACK_ID,
+                context.stackProps(),
+                networkStack.getVpc(),
+                networkStack.getKafkaBrokerSg()
+        );
+        mskStack.getNode().addDependency(networkStack);
+        return mskStack;
+    }
+
+    private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks, MskStack mskStack) {
         String legacyApiImageTag = AppConfig.getOptionalValueOrDefault("API_IMAGE_TAG", DEFAULT_IMAGE_TAG);
 
         return new EcsClusterStack(
@@ -320,10 +331,13 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminWebSg(),
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
+                baseStacks.networkStack().getRecommendationRealtimeSg(),
                 baseStacks.ecrStack().getAdminWebRepo(),
                 baseStacks.ecrStack().getApiServerRepo(),
                 baseStacks.rdsStack().getRds(),
                 baseStacks.rdsStack().getDbSecret(),
+                mskStack.getServerlessCluster().getAttrArn(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminWebPort(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),

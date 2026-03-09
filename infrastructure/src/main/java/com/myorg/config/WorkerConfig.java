@@ -6,9 +6,7 @@ import java.util.Arrays;
 import java.util.List;
 
 public record WorkerConfig(
-        String workerBatchJobName,
         String workerRunWindow,
-        String workerImageTagPrefix,
 
         int workerPollSeconds,
         int workerMaxAttempts,
@@ -18,6 +16,7 @@ public record WorkerConfig(
         String workerLockBasePath,
 
         String workerTaskDefinitionArn,
+        String workerTaskDefinitionFamily,
         String workerContainerName,
 
         List<String> workerSubnetIds,
@@ -25,10 +24,8 @@ public record WorkerConfig(
 
 ) {
     public static WorkerConfig fromEnv() {
-        return new WorkerConfig(
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_BATCH_JOB_NAME),
+        WorkerConfig config = new WorkerConfig(
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_RUN_WINDOW),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_IMAGE_TAG_PREFIX),
 
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_POLL_SECONDS)),
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_MAX_ATTEMPTS)),
@@ -36,7 +33,8 @@ public record WorkerConfig(
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_INPUT_BASE_PATH),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_OUTPUT_BASE_PATH),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_LOCK_BASE_PATH),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_ARN),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_ARN.key(), ""),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY.key(), ""),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_CONTAINER_NAME),
 
                 parsingToNonEmptyList(
@@ -48,6 +46,22 @@ public record WorkerConfig(
                         EnvKey.ON_DEMAND_WORKER_SECURITY_GROUP_IDS.key()
                 )
         );
+
+        if (config.workerTaskDefinitionArn().isBlank() && config.workerTaskDefinitionFamily().isBlank()) {
+            throw new IllegalStateException("ON_DEMAND_WORKER_TASK_DEFINITION_ARN 또는 ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY 중 하나는 필요합니다.");
+        }
+
+        return config;
+    }
+
+    /**
+     * batch 실행 시에는 family를 우선 사용해 항상 최신 ACTIVE revision을 바라본다.
+     */
+    public String workerTaskDefinitionIdentifier() {
+        if (workerTaskDefinitionFamily != null && !workerTaskDefinitionFamily.isBlank()) {
+            return workerTaskDefinitionFamily;
+        }
+        return workerTaskDefinitionArn;
     }
 
     private static List<String> parsingToNonEmptyList(String origin, String key){

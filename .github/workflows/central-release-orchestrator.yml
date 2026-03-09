@@ -113,7 +113,7 @@ on:
           - release:minor
           - release:patch
       deploy-labels:
-        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web,deploy:worker,deploy:counseling-analytics)"
+        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web,deploy:worker,deploy:recommendation-server)"
         required: true
         default: "deploy:api-server"
         type: string
@@ -190,6 +190,8 @@ jobs:
       deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
       deploy_worker: ${{ steps.resolve.outputs.deploy_worker }}
       deploy_counseling_analytics: ${{ steps.resolve.outputs.deploy_counseling_analytics }}
+      deploy_recommendation_realtime: ${{ steps.resolve.outputs.deploy_recommendation_realtime }}
+      deploy_counseling_batch: ${{ steps.resolve.outputs.deploy_counseling_batch }}
       can_deploy_counseling_service: ${{ steps.resolve.outputs.can_deploy_counseling_service }}
       ci_run_worker_task: ${{ steps.resolve.outputs.ci_run_worker_task }}
     steps:
@@ -205,7 +207,17 @@ jobs:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const releaseAllowed = ["release:major", "release:minor", "release:patch"];
-            const deployAllowed  = ["deploy:admin-web", "deploy:api-server", "deploy:customer-web", "deploy:worker", "deploy:counseling-analytics"];
+            const deployAllowed  = [
+              "deploy:admin-web",
+              "deploy:api-server",
+              "deploy:customer-web",
+              "deploy:worker",
+              "deploy:counseling-analytics",
+              "deploy:recommendation-realtime",
+              "deploy:counseling-batch",
+              "deploy:recommendation-server",
+              "deploy:analysis-server"
+            ];
 
             function splitRepo(full) {
               const parts = String(full || "").trim().split("/");
@@ -354,6 +366,21 @@ jobs:
             core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
             core.setOutput("deploy_worker", deployLabels.includes("deploy:worker") ? "true" : "false");
             core.setOutput("deploy_counseling_analytics", deployLabels.includes("deploy:counseling-analytics") ? "true" : "false");
+            core.setOutput(
+              "deploy_recommendation_realtime",
+              (
+                deployLabels.includes("deploy:recommendation-server") ||
+                deployLabels.includes("deploy:recommendation-realtime") ||
+                deployLabels.includes("deploy:counseling-analytics")
+              ) ? "true" : "false"
+            );
+            core.setOutput(
+              "deploy_counseling_batch",
+              (
+                deployLabels.includes("deploy:analysis-server") ||
+                deployLabels.includes("deploy:counseling-batch")
+              ) ? "true" : "false"
+            );
             core.setOutput(
               "can_deploy_counseling_service",
               (
@@ -802,14 +829,16 @@ jobs:
   build-and-push-counseling-analytics:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: needs.resolve-context.outputs.deploy_counseling_analytics == 'true'
+    if: |
+      needs.resolve-context.outputs.deploy_recommendation_realtime == 'true' ||
+      needs.resolve-context.outputs.deploy_counseling_batch == 'true'
     steps:
       - name: Validate counseling analytics repository secret
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
-            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required for deploy:counseling-analytics"
+            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required for deploy:recommendation-server or deploy:analysis-server"
             exit 1
           fi
 
@@ -902,7 +931,8 @@ jobs:
       (
         needs.resolve-context.outputs.deploy_api_server == 'true' ||
         needs.resolve-context.outputs.deploy_admin_web == 'true' ||
-        needs.resolve-context.outputs.deploy_customer_web == 'true'
+        needs.resolve-context.outputs.deploy_customer_web == 'true' ||
+        needs.resolve-context.outputs.deploy_recommendation_realtime == 'true'
       )
     steps:
       - name: Checkout infra repo
@@ -937,73 +967,60 @@ jobs:
           RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
           DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
           DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
+          DEPLOY_RECOMMENDATION_REALTIME: ${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}
         run: |
           set -euo pipefail
 
-          SERVICE_ROWS="$(aws cloudformation describe-stack-resources \
-            --region "$AWS_REGION" \
-            --stack-name EcsClusterStack \
-            --query "StackResources[?ResourceType=='AWS::ECS::Service'].[LogicalResourceId,PhysicalResourceId]" \
-            --output text || true)"
+          latest_ecr_tag_for_prefix() {
+            local repository="$1"
+            local prefix="$2"
+            local fallback="$3"
+            local tags=""
+            local latest_tag=""
 
-          current_tag_for_service_prefix() {
-            local logical_prefix="$1"
-            local fallback="$2"
-            local service_arn=""
-            local cluster_name=""
-            local service_name=""
-            local task_def_arn=""
-            local image=""
-            local image_no_digest=""
-
-            service_arn="$(echo "$SERVICE_ROWS" | awk -v pfx="$logical_prefix" '$1 ~ "^"pfx {print $2; exit}')"
-            if [ -z "$service_arn" ] || [ "$service_arn" = "None" ]; then
-              echo "$fallback"
-              return
+            if [ "${prefix}" = "${fallback}" ]; then
+              fallback=""
             fi
 
-            cluster_name="$(echo "$service_arn" | awk -F'/' '{print $(NF-1)}')"
-            service_name="$(echo "$service_arn" | awk -F'/' '{print $NF}')"
-
-            task_def_arn="$(aws ecs describe-services \
+            tags="$(aws ecr describe-images \
               --region "$AWS_REGION" \
-              --cluster "$cluster_name" \
-              --services "$service_name" \
-              --query "services[0].taskDefinition" \
+              --repository-name "$repository" \
+              --query 'reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]' \
               --output text 2>/dev/null || true)"
 
-            if [ -z "$task_def_arn" ] || [ "$task_def_arn" = "None" ]; then
+            if [ -n "$tags" ]; then
+              latest_tag="$(printf '%s\n' "$tags" | tr '\t' '\n' | awk -v pfx="$prefix" '
+                NF == 0 { next }
+                pfx == "" { print; exit }
+                index($0, pfx) == 1 { print; exit }
+              ')"
+            fi
+
+            if [ -n "$latest_tag" ]; then
+              echo "$latest_tag"
+              return
+            fi
+
+            if [ -n "$fallback" ]; then
               echo "$fallback"
               return
             fi
 
-            image="$(aws ecs describe-task-definition \
-              --region "$AWS_REGION" \
-              --task-definition "$task_def_arn" \
-              --query "taskDefinition.containerDefinitions[0].image" \
-              --output text 2>/dev/null || true)"
-
-            if [ -z "$image" ] || [ "$image" = "None" ]; then
-              echo "$fallback"
-              return
-            fi
-
-            image_no_digest="${image%@*}"
-            if [[ "$image_no_digest" != *:* ]]; then
-              echo "$fallback"
-              return
-            fi
-
-            echo "${image_no_digest##*:}"
+            echo "::error::No image tag found in ECR repository=${repository} prefix=${prefix}" >&2
+            exit 1
           }
 
-          current_admin_web_tag="$(current_tag_for_service_prefix "AdminWebService" "latest")"
-          current_admin_api_tag="$(current_tag_for_service_prefix "AdminApiService" "latest")"
-          current_customer_api_tag="$(current_tag_for_service_prefix "CustomerApiService" "latest")"
+          COUNSELING_ANALYTICS_ECR_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY:-${COUNSELING_ANALYTICS_SOURCE_REPO}}"
+
+          current_admin_web_tag="$(latest_ecr_tag_for_prefix "${ADMIN_WEB_REPOSITORY}" "" "latest")"
+          current_admin_api_tag="$(latest_ecr_tag_for_prefix "${API_SERVER_REPOSITORY}" "admin-" "latest")"
+          current_customer_api_tag="$(latest_ecr_tag_for_prefix "${API_SERVER_REPOSITORY}" "customer-" "latest")"
+          current_recommendation_realtime_tag="$(latest_ecr_tag_for_prefix "${COUNSELING_ANALYTICS_ECR_REPOSITORY}" "counseling-analytics-" "latest")"
 
           ADMIN_WEB_IMAGE_TAG="$current_admin_web_tag"
           ADMIN_API_IMAGE_TAG="$current_admin_api_tag"
           CUSTOMER_API_IMAGE_TAG="$current_customer_api_tag"
+          RECOMMENDATION_REALTIME_IMAGE_TAG="$current_recommendation_realtime_tag"
 
           if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
             ADMIN_WEB_IMAGE_TAG="$RELEASE_TAG"
@@ -1014,14 +1031,20 @@ jobs:
             CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
           fi
 
+          if [ "${DEPLOY_RECOMMENDATION_REALTIME}" = "true" ]; then
+            RECOMMENDATION_REALTIME_IMAGE_TAG="counseling-analytics-${RELEASE_TAG}"
+          fi
+
           export ADMIN_WEB_IMAGE_TAG
           export ADMIN_API_IMAGE_TAG
           export CUSTOMER_API_IMAGE_TAG
+          export RECOMMENDATION_REALTIME_IMAGE_TAG
 
           {
             echo "admin_web_image_tag=$ADMIN_WEB_IMAGE_TAG"
             echo "admin_api_image_tag=$ADMIN_API_IMAGE_TAG"
             echo "customer_api_image_tag=$CUSTOMER_API_IMAGE_TAG"
+            echo "recommendation_realtime_image_tag=$RECOMMENDATION_REALTIME_IMAGE_TAG"
           } >> "$GITHUB_OUTPUT"
 
           cdk deploy EcsClusterStack --exclusively --require-approval never
@@ -1032,9 +1055,12 @@ jobs:
           echo "deploy_api_server=${{ needs.resolve-context.outputs.deploy_api_server }}"
           echo "deploy_admin_web=${{ needs.resolve-context.outputs.deploy_admin_web }}"
           echo "deploy_customer_web=${{ needs.resolve-context.outputs.deploy_customer_web }}"
+          echo "deploy_recommendation_realtime=${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}"
+          echo "deploy_counseling_batch=${{ needs.resolve-context.outputs.deploy_counseling_batch }}"
           echo "admin_api_image_tag=${{ steps.deploy-ecs.outputs.admin_api_image_tag }}"
           echo "customer_api_image_tag=${{ steps.deploy-ecs.outputs.customer_api_image_tag }}"
           echo "admin_web_image_tag=${{ steps.deploy-ecs.outputs.admin_web_image_tag }}"
+          echo "recommendation_realtime_image_tag=${{ steps.deploy-ecs.outputs.recommendation_realtime_image_tag }}"
 
   run-worker-task:
     runs-on: ubuntu-latest
@@ -1254,6 +1280,12 @@ jobs:
 
           taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
 
+          task_role_arn="$(echo "$taskdef_json" | jq -r '.taskRoleArn // empty')"
+          if [ -z "$task_role_arn" ]; then
+            echo "::error::Source worker task definition must define taskRoleArn for AWS_MSK_IAM authentication."
+            exit 1
+          fi
+
           effective_container_name="$container_name"
           if ! echo "$taskdef_json" | jq -e --arg cname "$container_name" 'any(.containerDefinitions[]; .name == $cname)' >/dev/null; then
             fallback_container_name="$(echo "$taskdef_json" | jq -r '.containerDefinitions[0].name // empty')"
@@ -1290,17 +1322,37 @@ jobs:
             exit 1
           fi
 
+          msk_bootstrap_brokers="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name MskStack \
+            --query "Stacks[0].Outputs[?OutputKey=='MskBootstrapBrokersSaslIam'].OutputValue | [0]" \
+            --output text 2>/dev/null || true)"
+
+          if [ -z "$msk_bootstrap_brokers" ] || [ "$msk_bootstrap_brokers" = "None" ]; then
+            echo "::error::Could not resolve MSK bootstrap brokers from MskStack output."
+            exit 1
+          fi
+
+          # 브로커 endpoint는 자격 증명은 아니지만, Actions 로그에서 우발적으로 드러나지 않도록 마스킹한다.
+          echo "::add-mask::$msk_bootstrap_brokers"
+
           run_overrides="$(jq -cn \
             --arg cname "$effective_container_name" \
             --arg runId "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --arg releaseTag "$RELEASE_TAG" \
+            --arg mskBootstrapBrokers "$msk_bootstrap_brokers" \
             '{
               containerOverrides: [
                 {
                   name: $cname,
                   environment: [
                     {name: "RUN_ID", value: $runId},
-                    {name: "RELEASE_TAG", value: $releaseTag}
+                    {name: "RELEASE_TAG", value: $releaseTag},
+                    {name: "MSK_BOOTSTRAP_SERVERS", value: $mskBootstrapBrokers},
+                    {name: "KAFKA_SECURITY_PROTOCOL", value: "SASL_SSL"},
+                    {name: "KAFKA_SASL_MECHANISM", value: "AWS_MSK_IAM"},
+                    {name: "KAFKA_SASL_JAAS_CONFIG", value: "software.amazon.msk.auth.iam.IAMLoginModule required;"},
+                    {name: "KAFKA_SASL_CALLBACK_HANDLER_CLASS", value: "software.amazon.msk.auth.iam.IAMClientCallbackHandler"}
                   ]
                 }
               ]
@@ -1451,7 +1503,7 @@ jobs:
       - deploy-ecs
     if: |
       always() &&
-      needs.resolve-context.outputs.deploy_counseling_analytics == 'true' &&
+      needs.resolve-context.outputs.deploy_recommendation_realtime == 'true' &&
       needs.resolve-context.outputs.can_deploy_counseling_service == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
@@ -1551,3 +1603,114 @@ jobs:
           echo "service=${{ steps.deploy-service.outputs.counseling_service_name }}"
           echo "task_definition=${{ steps.deploy-service.outputs.counseling_task_definition }}"
           echo "image=${{ steps.deploy-service.outputs.counseling_image }}"
+
+  register-counseling-analytics-batch-task-definition:
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-context
+      - create-tag
+      - create-github-release
+      - build-and-push-counseling-analytics
+    if: |
+      always() &&
+      needs.resolve-context.outputs.deploy_counseling_batch == 'true' &&
+      needs.resolve-context.outputs.deploy_recommendation_realtime != 'true' &&
+      needs.resolve-context.result == 'success' &&
+      needs.create-tag.result == 'success' &&
+      needs.create-github-release.result == 'success' &&
+      needs.build-and-push-counseling-analytics.result == 'success'
+    outputs:
+      counseling_batch_task_definition: ${{ steps.register-taskdef.outputs.counseling_batch_task_definition }}
+      counseling_batch_image: ${{ steps.register-taskdef.outputs.counseling_batch_image }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register task definition revision for analysis batch
+        id: register-taskdef
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
+            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
+            exit 1
+          fi
+
+          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          if [ -z "$source_taskdef" ]; then
+            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
+              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
+              exit 1
+            fi
+            source_taskdef="$(aws ecs list-task-definitions \
+              --region "$AWS_REGION" \
+              --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY" \
+              --sort DESC \
+              --max-items 1 \
+              --query 'taskDefinitionArns[0]' \
+              --output text 2>/dev/null || true)"
+          fi
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "::error::Could not resolve task definition for analysis batch"
+            exit 1
+          fi
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
+          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
+
+          taskdef_json="$(aws ecs describe-task-definition \
+            --region "$AWS_REGION" \
+            --task-definition "$source_taskdef" \
+            --query 'taskDefinition' \
+            --output json)"
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq \
+            --arg img "$IMAGE_URI" \
+            --arg cname "$container_name" \
+            '
+            .containerDefinitions |= (
+              if any(.[]; .name == $cname)
+              then map(if .name == $cname then .image = $img else . end)
+              else (.[0].image = $img | .)
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            ' )"
+
+          new_taskdef_arn="$(aws ecs register-task-definition \
+            --region "$AWS_REGION" \
+            --cli-input-json "$new_taskdef_json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+
+          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+            echo "::error::Failed to register analysis batch task definition revision"
+            exit 1
+          fi
+
+          {
+            echo "counseling_batch_task_definition=$new_taskdef_arn"
+            echo "counseling_batch_image=$IMAGE_URI"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "analysis_batch_task_definition=${{ steps.register-taskdef.outputs.counseling_batch_task_definition }}"
+          echo "analysis_batch_image=${{ steps.register-taskdef.outputs.counseling_batch_image }}"

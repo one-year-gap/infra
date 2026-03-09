@@ -234,6 +234,10 @@ public class FargateApiService extends Construct {
         env.put(SPRING_PROFILES_ACTIVE, props.springProfile());
         env.put(SPRING_DATASOURCE_URL, props.jdbcUrl());
         env.put(SERVER_PORT, String.valueOf(props.containerPort()));
+        // 서비스별 내부 통신 주소나 런타임 연동값은 호출 스택에서만 주입한다.
+        if (props.extraEnvironment() != null && !props.extraEnvironment().isEmpty()) {
+            env.putAll(props.extraEnvironment());
+        }
         return env;
     }
 

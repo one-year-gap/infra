@@ -40,6 +40,9 @@ class EcsClusterStackTest {
         SecurityGroup customerApiSg = SecurityGroup.Builder.create(fixtureStack, "TestCustomerApiSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup recommendationRealtimeSg = SecurityGroup.Builder.create(fixtureStack, "TestRecommendationRealtimeSg")
+                .vpc(vpc)
+                .build();
 
         Repository adminWebRepo = Repository.Builder.create(fixtureStack, "TestAdminWebRepo")
                 .repositoryName("test-admin-web")
@@ -82,10 +85,13 @@ class EcsClusterStackTest {
                 adminWebSg,
                 adminApiSg,
                 customerApiSg,
+                recommendationRealtimeSg,
                 adminWebRepo,
                 apiServerRepo,
                 rds,
                 dbSecret,
+                "arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk-serverless/test-cluster-id",
+                "boot-test.c2.kafka-serverless.ap-northeast-2.amazonaws.com:9098",
                 3001,
                 8080,
                 8080,
@@ -102,16 +108,18 @@ class EcsClusterStackTest {
         Map<String, Map<String, Object>> services = template.findResources("AWS::ECS::Service");
         Map<String, Map<String, Object>> namespaces = template.findResources("AWS::ServiceDiscovery::PrivateDnsNamespace");
         Map<String, Map<String, Object>> sdServices = template.findResources("AWS::ServiceDiscovery::Service");
+        Map<String, Map<String, Object>> secrets = template.findResources("AWS::SecretsManager::Secret");
 
         //then
         assertEquals(1, clusters.size());
         assertEquals(1, logGroups.size());
-        assertEquals(3, taskDefinitions.size());
-        assertEquals(3, services.size());
+        assertEquals(4, taskDefinitions.size());
+        assertEquals(4, services.size());
         assertEquals(1, namespaces.size());
-        assertEquals(2, sdServices.size());
+        assertEquals(3, sdServices.size());
+        assertEquals(0, secrets.size());
 
-        assertEquals(2, countServicesByExecOption(services, true));
+        assertEquals(3, countServicesByExecOption(services, true));
         assertEquals(1, countServicesByExecOption(services, false));
 
         template.hasResourceProperties("AWS::Logs::LogGroup", Map.of(
@@ -128,6 +136,9 @@ class EcsClusterStackTest {
         ));
         template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
                 "Name", "customer-api"
+        ));
+        template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
+                "Name", "recommendation-realtime"
         ));
     }
 
