@@ -31,7 +31,6 @@ public class InfrastructureApp {
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
-    private static final String EFS_STACK_ID = "EfsStack";
     private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
     private static final String ON_DEMAND_WORKFLOW_STACK_ID = "OnDemandWorkflowStack";
     private static final String ON_DEMAND_LOCK_STACK_ID = "OnDemandLockStack";
@@ -46,7 +45,6 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_ALB_WAF = "alb-waf";
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
-    private static final String DEPLOY_MODE_EFS = "efs";
     private static final String DEPLOY_MODE_FULL = "full";
     private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
     private static final String DEPLOY_MODE_ON_DEMAND_WORKFLOW = "on-demand-workflow";

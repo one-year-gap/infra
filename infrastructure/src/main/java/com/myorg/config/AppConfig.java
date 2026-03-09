@@ -96,12 +96,6 @@ public final class AppConfig {
     }
 
 
-    /**
-     * Monitoring EC2가 속한 Security Group ID
-     */
-    public static String getMonitoringSecurityGroupId() {
-        return getRequiredValue("MONITORING_SECURITY_GROUP_ID");
-    }
 
     /*
      * =================================================================
