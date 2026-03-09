@@ -31,7 +31,6 @@ public class InfrastructureApp {
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
-    private static final String EFS_STACK_ID = "EfsStack";
     private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
     private static final String ON_DEMAND_WORKFLOW_STACK_ID = "OnDemandWorkflowStack";
     private static final String ON_DEMAND_LOCK_STACK_ID = "OnDemandLockStack";
@@ -46,7 +45,6 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_ALB_WAF = "alb-waf";
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
-    private static final String DEPLOY_MODE_EFS = "efs";
     private static final String DEPLOY_MODE_FULL = "full";
     private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
     private static final String DEPLOY_MODE_ON_DEMAND_WORKFLOW = "on-demand-workflow";
@@ -69,7 +67,6 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB_WAF -> deployAlbWaf(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
-            case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
             case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_LOCK -> deployOnDemandLock(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_WORKFLOW -> deployOnDemandWorkflow(deploymentContext);
@@ -80,18 +77,6 @@ public class InfrastructureApp {
         app.synth();
     }
 
-    /**
-     * AWS EFS Stack Deploy
-     */
-    private static void deployEfs(DeploymentContext deploymentContext) {
-        new EfsStack(
-                deploymentContext.app(),
-                EFS_STACK_ID,
-                deploymentContext.stackProps(),
-                AppConfig.getEfsTargetVpcId(),
-                AppConfig.getMonitoringSecurityGroupId()
-        );
-    }
 
     /**
      * Route53 Hosted Zone 스택 배포
