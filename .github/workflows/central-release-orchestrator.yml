@@ -181,6 +181,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
+      source_repo_key: ${{ steps.resolve.outputs.source_repo_key }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
@@ -398,11 +399,12 @@ jobs:
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
 
-            const sourceRepoName = canonicalSourceRepoName(repo);
+            const sourceRepoKey = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
-            const tagNamespace = resolveTagNamespace(sourceRepoName, deployLabels);
+            const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
-            core.setOutput("source_repo_name", sourceRepoName);
+            core.setOutput("source_repo_name", repo);
+            core.setOutput("source_repo_key", sourceRepoKey);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
@@ -444,7 +446,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_name != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_key != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -454,6 +456,7 @@ jobs:
         shell: bash
         env:
           SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -461,13 +464,13 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          case "${SOURCE_REPO_NAME}" in
+          case "${SOURCE_REPO_KEY}" in
             api-server) SOURCE_REPO="${API_SERVER_SOURCE_REPO}" ;;
             admin-fe) SOURCE_REPO="${ADMIN_WEB_SOURCE_REPO}" ;;
             worker) SOURCE_REPO="${WORKER_SOURCE_REPO}" ;;
             counseling-analytics) SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO}" ;;
             *)
-              echo "::error::resolve-context output source_repo_name is invalid. source_repo_name=${SOURCE_REPO_NAME}"
+              echo "::error::resolve-context output source_repo_key is invalid. source_repo_name=${SOURCE_REPO_NAME} source_repo_key=${SOURCE_REPO_KEY}"
               exit 1
               ;;
           esac
@@ -604,6 +607,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           SOURCE_REPO_NAME:   ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY:    ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -617,13 +621,14 @@ jobs:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
+            const sourceRepoKey = String(process.env.SOURCE_REPO_KEY || "").trim();
             const sourceRepoMap = {
               "api-server": process.env.API_SERVER_SOURCE_REPO,
               "admin-fe": process.env.ADMIN_WEB_SOURCE_REPO,
               "worker": process.env.WORKER_SOURCE_REPO,
               "counseling-analytics": process.env.COUNSELING_ANALYTICS_SOURCE_REPO
             };
-            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoName] || "").trim();
+            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoKey] || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
@@ -635,7 +640,7 @@ jobs:
               .filter(Boolean);
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo. source_repo_name=${sourceRepoName}, resolved=${sourceRepoRaw}`);
+              throw new Error(`invalid source repo. source_repo_name=${sourceRepoName}, source_repo_key=${sourceRepoKey}, resolved=${sourceRepoRaw}`);
             }
 
             try {
@@ -678,11 +683,11 @@ jobs:
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "api-server" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -699,11 +704,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "api-server" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -758,11 +763,11 @@ jobs:
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "admin-fe" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -779,11 +784,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "admin-fe" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -837,11 +842,11 @@ jobs:
         id: resolve-worker-repo
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "worker" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -858,11 +863,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "worker" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -924,11 +929,11 @@ jobs:
         id: resolve-counseling-repo
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "counseling-analytics" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -945,11 +950,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_NAME}" == "counseling-analytics" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
