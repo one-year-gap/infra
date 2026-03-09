@@ -477,8 +477,9 @@ public class EcsClusterStack extends Stack {
     }
 
     private List<PolicyStatement> buildMskTaskPolicies(String mskClusterArn) {
-        String region = AppConfig.getRegion();
-        String accountId = AppConfig.getAccountId();
+        // Stack이 가진 region/account 컨텍스트를 사용해야 CDK 테스트에서도 외부 환경변수에 의존하지 않는다.
+        String region = this.getRegion();
+        String accountId = this.getAccount();
         String clusterName = AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME);
 
         String topicArnPattern = String.format(
