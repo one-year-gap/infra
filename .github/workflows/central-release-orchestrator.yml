@@ -184,6 +184,7 @@ jobs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
+      tag_namespace: ${{ steps.resolve.outputs.tag_namespace }}
       deploy_labels_csv: ${{ steps.resolve.outputs.deploy_labels_csv }}
       deploy_api_server: ${{ steps.resolve.outputs.deploy_api_server }}
       deploy_admin_web: ${{ steps.resolve.outputs.deploy_admin_web }}
@@ -232,6 +233,42 @@ jobs:
                 .split(",")
                 .map(v => v.trim())
                 .filter(Boolean);
+            }
+
+            function resolveTagNamespace(repoName, deployLabels) {
+              if (repoName !== "counseling-analytics") {
+                return "";
+              }
+
+              const hasLegacyNamespace = deployLabels.includes("deploy:counseling-analytics");
+              const hasRecommendationNamespace = deployLabels.some(label =>
+                label === "deploy:recommendation-server" || label === "deploy:recommendation-realtime"
+              );
+              const hasAnalysisNamespace = deployLabels.some(label =>
+                label === "deploy:analysis-server" || label === "deploy:counseling-batch"
+              );
+
+              const namespaceCount = [
+                hasLegacyNamespace,
+                hasRecommendationNamespace,
+                hasAnalysisNamespace,
+              ].filter(Boolean).length;
+
+              if (namespaceCount !== 1) {
+                throw new Error(
+                  "counseling-analytics release must resolve to exactly one namespace. " +
+                    "use one of deploy:analysis-server/deploy:counseling-batch, " +
+                    "deploy:recommendation-server/deploy:recommendation-realtime, or deploy:counseling-analytics"
+                );
+              }
+
+              if (hasRecommendationNamespace) {
+                return "recommendation-server";
+              }
+              if (hasAnalysisNamespace) {
+                return "analysis-server";
+              }
+              return "counseling-analytics";
             }
 
             let sourceRepo;
@@ -355,11 +392,13 @@ jobs:
             }
 
             const releaseLevel = releaseLabel.replace("release:", "");
+            const tagNamespace = resolveTagNamespace(repo, deployLabels);
 
             core.setOutput("source_repo_name", repo);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
+            core.setOutput("tag_namespace",     tagNamespace);
             core.setOutput("deploy_labels_csv", deployLabels.join(","));
             core.setOutput("deploy_api_server", deployLabels.includes("deploy:api-server") ? "true" : "false");
             core.setOutput("deploy_admin_web", deployLabels.includes("deploy:admin-web") ? "true" : "false");
@@ -470,6 +509,7 @@ jobs:
         shell: bash
         env:
           RELEASE_LEVEL: ${{ needs.resolve-context.outputs.release_level }}
+          TAG_NAMESPACE: ${{ needs.resolve-context.outputs.tag_namespace }}
           SOURCE_SHA:    ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
@@ -489,12 +529,36 @@ jobs:
             exit 1
           fi
 
-          LATEST_TAG="$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)"
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="v0.0.0"
+          LEGACY_TAG_PATTERN='v[0-9]*.[0-9]*.[0-9]*'
+          if [ -n "${TAG_NAMESPACE:-}" ]; then
+            TAG_PATTERN="${TAG_NAMESPACE}-v[0-9]*.[0-9]*.[0-9]*"
+            LATEST_TAG="$(git tag -l "$TAG_PATTERN" --sort=-v:refname | head -n1)"
+
+            # analysis-server inherits the legacy counseling-analytics version line.
+            if [ -z "$LATEST_TAG" ]; then
+              case "$TAG_NAMESPACE" in
+                analysis-server|counseling-analytics)
+                  LATEST_TAG="$(git tag -l "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n1)"
+                  ;;
+              esac
+            fi
+
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG="${TAG_NAMESPACE}-v0.0.0"
+            fi
+
+            BASE="${LATEST_TAG##*-v}"
+            if [ "$BASE" = "$LATEST_TAG" ]; then
+              BASE="${LATEST_TAG#v}"
+            fi
+          else
+            LATEST_TAG="$(git tag -l "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n1)"
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG="v0.0.0"
+            fi
+            BASE="${LATEST_TAG#v}"
           fi
 
-          BASE="${LATEST_TAG#v}"
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
 
           case "$RELEASE_LEVEL" in
@@ -507,7 +571,11 @@ jobs:
               ;;
           esac
 
-          NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          if [ -n "${TAG_NAMESPACE:-}" ]; then
+            NEXT_TAG="${TAG_NAMESPACE}-v${MAJOR}.${MINOR}.${PATCH}"
+          else
+            NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
 
           if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
             echo "::error::Tag already exists: $NEXT_TAG" >&2
@@ -535,6 +603,7 @@ jobs:
           VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
+          TAG_NAMESPACE:      ${{ needs.resolve-context.outputs.tag_namespace }}
           DEPLOY_LABELS_CSV:  ${{ needs.resolve-context.outputs.deploy_labels_csv }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
@@ -551,6 +620,7 @@ jobs:
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
             const releaseLabel   = process.env.RELEASE_LABEL;
+            const tagNamespace   = String(process.env.TAG_NAMESPACE || "").trim();
             const deployLabels   = String(process.env.DEPLOY_LABELS_CSV || "")
               .split(",")
               .map(v => v.trim())
@@ -570,8 +640,8 @@ jobs:
             }
 
             const header = [
-              
               `release-label: ${releaseLabel}`,
+              `tag-namespace: ${tagNamespace || "global"}`,
               `deploy-labels: ${deployLabels.join(", ") || "none"}`
             ].join("\n");
 
