@@ -12,8 +12,9 @@ import java.util.List;
 
 public class NetworkStack extends Stack {
     private final Vpc vpc;
-    private final SecurityGroup customerAlbSg, customerApiSg;
+    private final SecurityGroup customerAlbSg, customerApiSg, recommendationRealtimeSg, kafkaBrokerSg;
     private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg;
+    private static final int MSK_IAM_PORT = 9098;
 
     public NetworkStack(Construct scope, String id, StackProps props, NetworkStackConfig config) {
         super(scope, id, props);
@@ -70,6 +71,22 @@ public class NetworkStack extends Stack {
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
                 .description("Customer API Server Security Group")
+                .build();
+
+        // customer-api와 보안 경계를 분리하기 위해 별도 SG 사용
+        this.recommendationRealtimeSg = SecurityGroup.Builder.create(this, "RecommendationRealtimeSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("Recommendation Realtime ECS Security Group")
+                .build();
+
+        // Kafka broker SG는 client SG에서만 IAM/TLS 포트를 열어 private 통신만 허용
+        this.kafkaBrokerSg = SecurityGroup.Builder.create(this, "KafkaBrokerSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("MSK Serverless Broker Security Group")
                 .build();
 
         this.adminAlbSg = SecurityGroup.Builder.create(this, "AdminAlbSg")
@@ -135,6 +152,26 @@ public class NetworkStack extends Stack {
                 Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
                 "Customer API to DB"
+        );
+
+        /*
+         * =================================================================
+         *                   Recommendation Realtime Rules
+         * =================================================================
+         */
+        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
+        recommendationRealtimeSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
+
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Recommendation Realtime only"
         );
 
 
@@ -209,6 +246,14 @@ public class NetworkStack extends Stack {
 
     public SecurityGroup getCustomerApiSg() {
         return customerApiSg;
+    }
+
+    public SecurityGroup getRecommendationRealtimeSg() {
+        return recommendationRealtimeSg;
+    }
+
+    public SecurityGroup getKafkaBrokerSg() {
+        return kafkaBrokerSg;
     }
 
     public SecurityGroup getAdminAlbSg() {

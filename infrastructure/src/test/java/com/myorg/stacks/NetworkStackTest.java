@@ -14,10 +14,13 @@ class NetworkStackTest {
     private Template template;
     private String customerAlbSgLogicalId;
     private String customerApiSgLogicalId;
+    private String recommendationRealtimeSgLogicalId;
+    private String kafkaBrokerSgLogicalId;
     private String adminAlbSgLogicalId;
     private String adminWebSgLogicalId;
     private String adminApiSgLogicalId;
     private String dbSgLogicalId;
+    private static final int MSK_IAM_PORT = 9098;
 
     private static final List<String> allowedIpsList = List.of(
             "203.0.113.10/32",
@@ -50,6 +53,10 @@ class NetworkStackTest {
                 "Customer Application Load Balancer Security Group");
         customerApiSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Customer API Server Security Group");
+        recommendationRealtimeSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Recommendation Realtime ECS Security Group");
+        kafkaBrokerSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "MSK Serverless Broker Security Group");
         adminAlbSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Admin Application Load Balancer Security Group");
         adminWebSgLogicalId = findSecurityGroupLogicalIdByDescription(
@@ -258,6 +265,26 @@ class NetworkStackTest {
             assertNoEgressCidrOnPort(customerApiSgLogicalId, "tcp", 5432);
         }
     }
+
+    @Nested
+    @DisplayName("Recommendation Realtime Security Group")
+    class RecommendationRealtimeSgTest{
+        @Test
+        @DisplayName("MSK IAM 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToKafkaBrokerOnly() {
+            assertEgressToSecurityGroup(recommendationRealtimeSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
+        }
+    }
+
+    @Nested
+    @DisplayName("Kafka Broker Security Group")
+    class KafkaBrokerSgTest {
+        @Test
+        @DisplayName("Recommendation Realtime에서만 MSK IAM 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromRecommendationRealtimeOnly() {
+            assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, recommendationRealtimeSgLogicalId, MSK_IAM_PORT);
+        }
+    }
     @Nested
     @DisplayName("Admin ALB Security Group")
     class AdminAlbSgTest{
@@ -342,9 +369,9 @@ class NetworkStackTest {
         }
     }
 
-    @DisplayName("Security Group은 6개 생성된다 - CustomerAlbSg, CustomerApiSg, AdminAlbSg, AdminWebSg, AdminApiSg, DbSg")
+    @DisplayName("Security Group은 8개 생성된다 - CustomerAlbSg, CustomerApiSg, RecommendationRealtimeSg, KafkaBrokerSg, AdminAlbSg, AdminWebSg, AdminApiSg, DbSg")
     @Test
-    void should_create_six_security_groups(){
-        template.resourceCountIs("AWS::EC2::SecurityGroup",6);
+    void should_create_eight_security_groups(){
+        template.resourceCountIs("AWS::EC2::SecurityGroup",8);
     }
 }
