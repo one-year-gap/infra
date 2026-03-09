@@ -95,12 +95,6 @@ public final class AppConfig {
         return value != null ? value : defaultValue;
     }
 
-    /**
-     * EFS를 붙일 대상 VPC ID
-     */
-    public static String getEfsTargetVpcId() {
-        return getRequiredValue("EFS_TARGET_VPC_ID");
-    }
 
     /**
      * Monitoring EC2가 속한 Security Group ID

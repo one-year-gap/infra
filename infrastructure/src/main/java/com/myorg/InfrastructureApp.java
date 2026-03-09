@@ -69,7 +69,6 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB_WAF -> deployAlbWaf(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
-            case DEPLOY_MODE_EFS -> deployEfs(deploymentContext);
             case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_LOCK -> deployOnDemandLock(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_WORKFLOW -> deployOnDemandWorkflow(deploymentContext);
@@ -80,18 +79,6 @@ public class InfrastructureApp {
         app.synth();
     }
 
-    /**
-     * AWS EFS Stack Deploy
-     */
-    private static void deployEfs(DeploymentContext deploymentContext) {
-        new EfsStack(
-                deploymentContext.app(),
-                EFS_STACK_ID,
-                deploymentContext.stackProps(),
-                AppConfig.getEfsTargetVpcId(),
-                AppConfig.getMonitoringSecurityGroupId()
-        );
-    }
 
     /**
      * Route53 Hosted Zone 스택 배포
