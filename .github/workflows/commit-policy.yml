@@ -78,6 +78,11 @@ jobs:
 
             const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const allowedTypeGroup = allowedTypes.map(escapeRe).join("|");
+            const ticketPatternBody = process.env.TICKET_PATTERN
+              .replace(/^\^/, "")
+              .replace(/\$$/, "");
+            // release PRs aggregate commits from multiple tickets, so only the format stays strict.
+            const allowsAnyValidTicket = branchType === "release";
 
             const oldStyleRe = new RegExp(
               `^(${allowedTypeGroup})\\/${escapeRe(ticket)}:\\s+.+$`
@@ -85,6 +90,14 @@ jobs:
 
             const newStyleRe = new RegExp(
               `^\\[${escapeRe(ticket)}\\]\\s+(${allowedTypeGroup}):\\s+.+$`
+            );
+
+            const oldStyleAnyTicketRe = new RegExp(
+              `^(${allowedTypeGroup})\\/(${ticketPatternBody}):\\s+.+$`
+            );
+
+            const newStyleAnyTicketRe = new RegExp(
+              `^\\[(${ticketPatternBody})\\]\\s+(${allowedTypeGroup}):\\s+.+$`
             );
 
             const commits = await github.paginate(
@@ -103,8 +116,12 @@ jobs:
                 continue;
               }
 
-              const okOld = oldStyleRe.test(firstLine);
-              const okNew = newStyleRe.test(firstLine);
+              const okOld = allowsAnyValidTicket
+                ? oldStyleAnyTicketRe.test(firstLine)
+                : oldStyleRe.test(firstLine);
+              const okNew = allowsAnyValidTicket
+                ? newStyleAnyTicketRe.test(firstLine)
+                : newStyleRe.test(firstLine);
 
               if (!okOld && !okNew) {
                 bad.push({ sha: c.sha.slice(0, 7), msg: firstLine });
@@ -113,10 +130,22 @@ jobs:
 
             if (bad.length) {
               const lines = bad.map(x => `- ${x.sha}: ${x.msg}`).join("\n");
+              const expectedOld = allowsAnyValidTicket
+                ? `"<type>/<TICKET>: <message>"`
+                : `"<type>/${ticket}: <message>"`;
+              const expectedOldExample = allowsAnyValidTicket
+                ? `feat/HSC-244: 릴리즈 대상 반영`
+                : `feat/${ticket}: 로그인 API 추가`;
+              const expectedNew = allowsAnyValidTicket
+                ? `"[TICKET] <type>: <message>"`
+                : `"[${ticket}] <type>: <message>"`;
+              const expectedNewExample = allowsAnyValidTicket
+                ? `[HSC-244] fix: 릴리즈 대상 반영`
+                : `[${ticket}] fix: NPE 수정`;
               core.setFailed(
                 `커밋 메시지 규칙 위반 (아래 둘 중 하나를 만족해야 함)\n` +
-                `1) "<type>/${ticket}: <message>"  (예: feat/${ticket}: 로그인 API 추가)\n` +
-                `2) "[${ticket}] <type>: <message>" (예: [${ticket}] fix: NPE 수정)\n\n` +
+                `1) ${expectedOld}  (예: ${expectedOldExample})\n` +
+                `2) ${expectedNew} (예: ${expectedNewExample})\n\n` +
                 `아래 커밋들이 규칙을 만족하지 않습니다:\n${lines}\n\n` +
                 `TIP) 로컬에서 husky로 자동 부착하거나, rebase -i로 커밋 메시지를 수정하세요.`
               );
