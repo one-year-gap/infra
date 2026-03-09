@@ -65,7 +65,7 @@ public class MskStack extends Stack {
                         .build());
 
         AwsSdkCall getBootstrapBrokers = AwsSdkCall.builder()
-                .service("MSK")
+                .service("Kafka")
                 .action("getBootstrapBrokers")
                 .parameters(Map.of("ClusterArn", serverlessCluster.getAttrArn()))
                 .physicalResourceId(PhysicalResourceId.of(serverlessCluster.getAttrArn()))
