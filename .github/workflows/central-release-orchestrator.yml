@@ -1653,7 +1653,7 @@ jobs:
               echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
               exit 1
             fi
-            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
+            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null | head -n1 || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
@@ -1757,7 +1757,7 @@ jobs:
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
-              --output text 2>/dev/null || true)"
+              --output text 2>/dev/null | head -n1 || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
