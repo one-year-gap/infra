@@ -579,6 +579,16 @@ jobs:
             BASE="${LATEST_TAG#v}"
           fi
 
+          if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+            LATEST_TAG_SHA="$(git rev-list -n 1 "$LATEST_TAG")"
+            if [ "$LATEST_TAG_SHA" = "$TARGET_SHA" ]; then
+              echo "Reuse existing tag for same target sha: $LATEST_TAG"
+              echo "version_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+              echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
 
           case "$RELEASE_LEVEL" in
