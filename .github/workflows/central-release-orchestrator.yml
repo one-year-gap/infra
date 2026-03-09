@@ -1744,16 +1744,34 @@ jobs:
             exit 1
           fi
 
-          source_taskdef="${ON_DEMAND_WORKER_TASK_DEFINITION_ARN:-${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}}"
+          target_taskdef_family="${ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:-}"
+          if [ -z "$target_taskdef_family" ]; then
+            echo "::error::Set ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY for dedicated analysis batch family"
+            exit 1
+          fi
+
+          source_taskdef="${ON_DEMAND_WORKER_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
-            taskdef_family="${ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:-${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}}"
-            if [ -z "$taskdef_family" ]; then
-              echo "::error::Set ON_DEMAND_WORKER_TASK_DEFINITION_ARN or ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY (fallback: COUNSELING_ANALYTICS_TASK_DEFINITION_ARN/FAMILY)"
+            source_taskdef="$(aws ecs list-task-definitions \
+              --region "$AWS_REGION" \
+              --family-prefix "$target_taskdef_family" \
+              --sort DESC \
+              --max-items 1 \
+              --query 'taskDefinitionArns[0]' \
+              --output text 2>/dev/null | head -n1 || true)"
+          fi
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          fi
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            source_taskdef_family="${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}"
+            if [ -z "$source_taskdef_family" ]; then
+              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY as source template"
               exit 1
             fi
             source_taskdef="$(aws ecs list-task-definitions \
               --region "$AWS_REGION" \
-              --family-prefix "$taskdef_family" \
+              --family-prefix "$source_taskdef_family" \
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
@@ -1779,7 +1797,10 @@ jobs:
           new_taskdef_json="$(echo "$taskdef_json" | jq \
             --arg img "$IMAGE_URI" \
             --arg cname "$container_name" \
+            --arg family "$target_taskdef_family" \
             '
+            .family = $family
+            |
             .containerDefinitions |= (
               if any(.[]; .name == $cname)
               then map(if .name == $cname then .image = $img else . end)
