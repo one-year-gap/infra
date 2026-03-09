@@ -26,6 +26,7 @@ import java.util.Map;
  */
 public class MskStack extends Stack {
     private final CfnServerlessCluster serverlessCluster;
+    private final String bootstrapBrokersSaslIam;
 
     public MskStack(
             Construct scope,
@@ -98,13 +99,19 @@ public class MskStack extends Stack {
                 .description("Security group attached to MSK brokers")
                 .build();
 
+        this.bootstrapBrokersSaslIam = bootstrapBrokers.getResponseField("BootstrapBrokerStringSaslIam");
+
         CfnOutput.Builder.create(this, "MskBootstrapBrokersSaslIam")
-                .value(bootstrapBrokers.getResponseField("BootstrapBrokerStringSaslIam"))
+                .value(bootstrapBrokersSaslIam)
                 .description("Bootstrap brokers for IAM-authenticated clients")
                 .build();
     }
 
     public CfnServerlessCluster getServerlessCluster() {
         return serverlessCluster;
+    }
+
+    public String getBootstrapBrokersSaslIam() {
+        return bootstrapBrokersSaslIam;
     }
 }

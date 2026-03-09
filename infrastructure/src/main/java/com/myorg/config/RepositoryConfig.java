@@ -22,4 +22,13 @@ public class RepositoryConfig {
         return AppConfig.getRequiredValue("API_SERVER_REPOSITORY");
     }
 
+    /**
+     * 추천 실시간 Python 서버 레포지토리 주소 반환
+     *
+     * @return recommendation repository
+     */
+    public static String getRecommendationRealtimeRepository() {
+        return AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_REPOSITORY);
+    }
+
 }

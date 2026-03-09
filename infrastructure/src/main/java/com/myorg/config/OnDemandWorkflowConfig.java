@@ -14,38 +14,15 @@ public record OnDemandWorkflowConfig(
         int workflowTimeoutMinutes,
         String scheduleExpression,
 
-        int scaleUpDesiredCount,
-        int scaleDownDesiredCount,
-
-        int steadyPollSeconds,
-        int steadyMaxAttempts,
-        int albHealthPollSeconds,
-        int albHealthMaxAttempts,
-
-        int readyProbeTimeoutSeconds,
-        int readyRetryIntervalSeconds,
-        int readyMaxAttempts,
-        double readyBackoffRate,
-        String readyRequiredChecksCsv,
-
         String expectedReleaseTag,
-        String fastApiImageTagPrefix,
-        boolean enableReleaseCheck,
 
         int businessMinProcessedCount,
         String businessRequiredResultFilesCsv,
 
-        boolean enforceIsolationGuard,
-        boolean enforceSeparateEfsAccessPoints,
         boolean enableBusinessValidation,
 
-        //Lambda
         LambdaConfig lambdaConfig,
-        //watchDog
-        WatchDogConfig watchDogConfig,
-        //DynamoDb
         DynamoDBConfig dynamoDBConfig,
-        //worker
         WorkerConfig workerConfig
 ) {
     /**
@@ -53,58 +30,28 @@ public record OnDemandWorkflowConfig(
      */
     public static OnDemandWorkflowConfig fromEnv() {
         return new OnDemandWorkflowConfig(
-                // 상태머신 식별
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_STATE_MACHINE_NAME),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKFLOW_TIMEOUT_MINUTES)),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_SCHEDULE_EXPRESSION),
+                // analysis batch 상태머신 식별 및 스케줄
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_STATE_MACHINE_NAME.key(), "AnalysisBatchWorkflow"),
+                Integer.parseInt(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKFLOW_TIMEOUT_MINUTES.key(), "120")),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_SCHEDULE_EXPRESSION.key(), ""),
 
-                // scale
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_SCALE_UP_DESIRED_COUNT)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_SCALE_DOWN_DESIRED_COUNT)),
+                // 배치 task에 override로 주입할 릴리즈 태그
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_EXPECTED_RELEASE_TAG.key(), ""),
 
-                // steady/alb polling
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_STEADY_POLL_SECONDS)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_STEADY_MAX_ATTEMPTS)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ALB_HEALTH_POLL_SECONDS)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ALB_HEALTH_MAX_ATTEMPTS)),
+                // 배치 종료 후 선택 검증
+                Integer.parseInt(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_MIN_PROCESSED_COUNT.key(), "0")),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_REQUIRED_RESULT_FILES.key(), ""),
+                Boolean.parseBoolean(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ENABLE_BUSINESS_VALIDATION.key(), "false")),
 
-                // ready gate
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_PROBE_TIMEOUT_SECONDS)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_RETRY_INTERVAL_SECONDS)),
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_MAX_ATTEMPTS)),
-
-                Double.parseDouble(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_BACKOFF_RATE)),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_READY_REQUIRED_CHECKS),
-
-                // release consistency
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_EXPECTED_RELEASE_TAG),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_FASTAPI_IMAGE_TAG_PREFIX),
-                Boolean.parseBoolean(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ENABLE_RELEASE_CHECK)),
-
-                // business validation
-                Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_MIN_PROCESSED_COUNT)),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_REQUIRED_RESULT_FILES),
-
-                // runtime isolation guard
-                Boolean.parseBoolean(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ENFORCE_ISOLATION_GUARD)),
-                Boolean.parseBoolean(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ENFORCE_SEPARATE_EFS_ACCESS_POINTS)),
-                Boolean.parseBoolean(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_ENABLE_BUSINESS_VALIDATION)),
-
-                // lambda assets + memory
+                // 검증/락/배치 실행에 필요한 지원 설정
                 LambdaConfig.fromEnv(),
-                WatchDogConfig.fromEnv(),
                 DynamoDBConfig.fromEnv(),
                 WorkerConfig.fromEnv()
         );
     }
 
-
     public boolean hasExpectedReleaseTag() {
         return expectedReleaseTag != null && !expectedReleaseTag.isBlank();
-    }
-
-    public List<String> readyRequiredChecks() {
-        return splitCsv(readyRequiredChecksCsv);
     }
 
     public List<String> businessRequiredResultFiles() {

@@ -1,11 +1,10 @@
 package com.myorg.stacks;
 
-import com.myorg.config.dynamodb.DynamoDBConfig;
-import com.myorg.workflow.ondemand.OnDemandSupportFunctionFactory;
 import com.myorg.config.OnDemandWorkflowConfig;
+import com.myorg.config.dynamodb.DynamoDBConfig;
 import com.myorg.workflow.ondemand.OnDemandWorkflowDefinitionBuilder;
 import com.myorg.workflow.ondemand.OnDemandWorkflowResources;
-import com.myorg.workflow.ondemand.ReadyProbeFunctionFactory;
+import com.myorg.workflow.ondemand.OnDemandSupportFunctionFactory;
 import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.Stack;
@@ -15,10 +14,8 @@ import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awscdk.services.dynamodb.TableAttributes;
 import software.amazon.awscdk.services.events.Rule;
 import software.amazon.awscdk.services.events.Schedule;
-import software.amazon.awscdk.services.events.targets.LambdaFunction;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
 import software.amazon.awscdk.services.events.targets.SfnStateMachineProps;
-import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.lambda.Function;
 import software.amazon.awscdk.services.stepfunctions.Chain;
 import software.amazon.awscdk.services.stepfunctions.DefinitionBody;
@@ -27,11 +24,12 @@ import software.amazon.awscdk.services.stepfunctions.StateMachineProps;
 import software.constructs.Construct;
 
 /**
- * 온디맨드 FastAPI + Worker 워크플로우 스택.
+ * 스케줄 기반 analysis batch 워크플로우 스택.
  *
- * 1) FastAPI: default desired=0 / 실행: 1 / 0으로 복구
- * 2) Step Functions: 기동 -> 준비 확인 -> 배치 -> 종료
- * 3) DynamoDB lock + Watchdog로 운영 중 실제 사고 예방
+ * 1) EventBridge가 StateMachine을 시작
+ * 2) StateMachine이 DynamoDB 락을 선점
+ * 3) ECS RunTask(APP_MODE=batch) 1회 실행
+ * 4) 종료 확인/검증 후 락 해제
  */
 public class OnDemandWorkflowStack extends Stack {
     /**
@@ -72,38 +70,15 @@ public class OnDemandWorkflowStack extends Stack {
     private void initialize(OnDemandWorkflowResources resources, OnDemandWorkflowConfig config) {
         this.lockTable = importLockTable();
 
-        /*
-        * =================================================================
-        * 보조 Lambda 생성
-        * =================================================================
-        */
-        Function readyProbeFunction = ReadyProbeFunctionFactory.create(
-                this,
-                "ReadyProbeFunction",
-                resources,
-                config
-        );
-
-        Function runtimeGuardFunction = OnDemandSupportFunctionFactory.createRuntimeGuard(
-                this,
-                "RuntimeGuardFunction",
-                config
-        );
-        // Runtime guard: ECS/EC2/IAM 조회형 API를 사용 -> 격리 위반 여부 검증
-        runtimeGuardFunction.addToRolePolicy(PolicyStatement.Builder.create()
-                .actions(java.util.List.of(
-                        "ecs:DescribeTaskDefinition",
-                        "ec2:DescribeSecurityGroups",
-                        "iam:SimulatePrincipalPolicy"
-                ))
-                .resources(java.util.List.of("*"))
-                .build());
-
-        Function businessValidatorFunction = OnDemandSupportFunctionFactory.createBusinessValidator(
-                this,
-                "BusinessValidatorFunction",
-                config
-        );
+        // 검증 로직은 배치 종료 후 선택적으로만 사용한다.
+        Function businessValidatorFunction = null;
+        if (config.enableBusinessValidation()) {
+            businessValidatorFunction = OnDemandSupportFunctionFactory.createBusinessValidator(
+                    this,
+                    "BusinessValidatorFunction",
+                    config
+            );
+        }
 
         /*
         * =================================================================
@@ -114,8 +89,6 @@ public class OnDemandWorkflowStack extends Stack {
                 this,
                 resources,
                 config,
-                readyProbeFunction,
-                runtimeGuardFunction,
                 businessValidatorFunction,
                 lockTable.getTableName(),
                 lockTable.getTableArn()
@@ -142,45 +115,10 @@ public class OnDemandWorkflowStack extends Stack {
                     SfnStateMachineProps.builder().build()
             ));
         }
-        /*
-        * =================================================================
-        * 강제 종료/권한오류 대비 Watchdog
-        * =================================================================
-        */
-        if (config.watchDogConfig().enableWatchdog() && config.watchDogConfig().watchdogScheduleExpression() != null && !config.watchDogConfig().watchdogScheduleExpression().isBlank()) {
-            Function watchdogFunction = OnDemandSupportFunctionFactory.createWatchdog(
-                    this,
-                    "OnDemandWatchdogFunction",
-                    config
-            );
-
-            watchdogFunction.addEnvironment("CLUSTER_ARN", resources.clusterArn());
-            watchdogFunction.addEnvironment("FASTAPI_SERVICE_NAME", resources.fastApiServiceName());
-            watchdogFunction.addEnvironment("STATE_MACHINE_ARN", stateMachine.getStateMachineArn());
-            watchdogFunction.addEnvironment("IDLE_MINUTES", String.valueOf(config.watchDogConfig().watchdogIdleMinutes()));
-
-            // Watchdog는 조회 + 보정(updateService desired=0) 권한만 최소 부여
-            watchdogFunction.addToRolePolicy(PolicyStatement.Builder.create()
-                    .actions(java.util.List.of(
-                            "ecs:DescribeServices",
-                            "ecs:UpdateService",
-                            "states:ListExecutions"
-                    ))
-                    .resources(java.util.List.of("*"))
-                    .build());
-
-            Rule watchdogRule = Rule.Builder.create(this, "OnDemandWatchdogScheduleRule")
-                    .schedule(Schedule.expression(config.watchDogConfig().watchdogScheduleExpression()))
-                    .build();
-
-
-            watchdogRule.addTarget(new LambdaFunction(watchdogFunction));
-        }
-
 
         CfnOutput.Builder.create(this, "OnDemandWorkflowStateMachineArn")
                 .value(stateMachine.getStateMachineArn())
-                .description("OnDemand FastAPI workflow StateMachine ARN")
+                .description("Analysis batch workflow StateMachine ARN")
                 .build();
 
         CfnOutput.Builder.create(this, "OnDemandWorkflowLockTableName")

@@ -72,6 +72,7 @@ class FargateApiServiceTest {
                 null,
                 null,
                 null,
+                null,
                 null
         );
 
@@ -151,6 +152,7 @@ class FargateApiServiceTest {
                 "admin",
                 "jdbc:postgresql://example.com:5432/holliverse",
                 dbSecret,
+                null,
                 ns,
                 "admin-api",
                 null,

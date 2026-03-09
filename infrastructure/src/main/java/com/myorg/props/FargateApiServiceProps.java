@@ -11,6 +11,7 @@ import software.amazon.awscdk.services.servicediscovery.INamespace;
 import software.constructs.Construct;
 
 import java.util.List;
+import java.util.Map;
 
 public record FargateApiServiceProps(
         Construct scope,
@@ -33,6 +34,8 @@ public record FargateApiServiceProps(
         String springProfile,//spring profile = customer,admin
         String jdbcUrl,
         Secret dbSecret,
+        // 서비스별 내부 DNS나 추가 런타임 설정은 공통 base env 뒤에 합쳐서 주입한다.
+        Map<String, String> extraEnvironment,
 
         //Cloud Map
         INamespace cloudMapNamespace,

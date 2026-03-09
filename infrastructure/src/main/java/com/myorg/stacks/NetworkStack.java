@@ -1,5 +1,7 @@
 package com.myorg.stacks;
 
+import com.myorg.config.AppConfig;
+import com.myorg.config.EnvKey;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.constants.NetworkConstants;
 import software.amazon.awscdk.Stack;
@@ -28,6 +30,7 @@ public class NetworkStack extends Stack {
 
         //Customer Web(ECS) Server
         Integer customerServerPort = config.customerServerPort();
+        Integer recommendationRealtimePort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT));
 
 
         /*
@@ -147,11 +150,21 @@ public class NetworkStack extends Stack {
                 NetworkConstants.POSTGRES,
                 "To DB only"
         );
+        customerApiSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
                 "Customer API to DB"
+        );
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Customer API only"
         );
 
         /*
@@ -171,6 +184,21 @@ public class NetworkStack extends Stack {
         kafkaBrokerSg.addIngressRule(
                 Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
+                "From Recommendation Realtime only"
+        );
+        recommendationRealtimeSg.addIngressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(recommendationRealtimePort),
+                "From Admin API only"
+        );
+        recommendationRealtimeSg.addEgressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "To Admin API only"
+        );
+        adminApiSg.addIngressRule(
+                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
                 "From Recommendation Realtime only"
         );
 
@@ -227,11 +255,26 @@ public class NetworkStack extends Stack {
                 NetworkConstants.POSTGRES,
                 "To DB only"
         );
+        adminApiSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
+        adminApiSg.addEgressRule(
+                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Port.tcp(recommendationRealtimePort),
+                "To Recommendation Realtime only"
+        );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
                 "Admin API to DB"
+        );
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Admin API only"
         );
     }
 
