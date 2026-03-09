@@ -8,7 +8,7 @@ public final class PortConfig {
      * @return port
      */
     public static Integer getCustomerWebPort(){
-        return Integer.parseInt(System.getenv("CUSTOMER_WEB_PORT"));
+        return Integer.parseInt(AppConfig.getRequiredValue("CUSTOMER_WEB_PORT"));
     }
 
     /**
@@ -16,7 +16,7 @@ public final class PortConfig {
      * @return port
      */
     public static Integer getAdminWebPort(){
-        return Integer.parseInt(System.getenv("ADMIN_WEB_PORT"));
+        return Integer.parseInt(AppConfig.getRequiredValue("ADMIN_WEB_PORT"));
     }
 
     /**
@@ -24,7 +24,7 @@ public final class PortConfig {
      * @return port
      */
     public static Integer getCustomerServerPort(){
-        return Integer.parseInt(System.getenv("CUSTOMER_SERVER_PORT"));
+        return Integer.parseInt(AppConfig.getRequiredValue("CUSTOMER_SERVER_PORT"));
     }
 
     /**
@@ -32,6 +32,6 @@ public final class PortConfig {
      * @return port
      */
     public static Integer getAdminServerPort(){
-        return Integer.parseInt(System.getenv("ADMIN_SERVER_PORT"));
+        return Integer.parseInt(AppConfig.getRequiredValue("ADMIN_SERVER_PORT"));
     }
 }

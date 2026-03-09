@@ -30,6 +30,7 @@ public class InfrastructureApp {
     private static final String ALB_WAF_STACK_ID = "AlbWafStack";
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
+    private static final String MSK_STACK_ID = "MskStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
     private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
     private static final String ON_DEMAND_WORKFLOW_STACK_ID = "OnDemandWorkflowStack";
@@ -45,6 +46,7 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_ALB_WAF = "alb-waf";
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
+    private static final String DEPLOY_MODE_MSK = "msk";
     private static final String DEPLOY_MODE_FULL = "full";
     private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
     private static final String DEPLOY_MODE_ON_DEMAND_WORKFLOW = "on-demand-workflow";
@@ -66,6 +68,7 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB -> deployAlb(deploymentContext);
             case DEPLOY_MODE_ALB_WAF -> deployAlbWaf(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
+            case DEPLOY_MODE_MSK -> deployMsk(deploymentContext);
             case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
             case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_LOCK -> deployOnDemandLock(deploymentContext);
@@ -154,6 +157,43 @@ public class InfrastructureApp {
                 MONITORING_STACK_ID,
                 context.stackProps(),
                 props
+        );
+    }
+
+    /**
+     * Recommendation realtime consumer 전용 MSK Serverless 스택 배포
+     */
+    private static void deployMsk(DeploymentContext context) {
+        // NetworkStack을 참조하는 기존 스택들을 함께 synth해서
+        // cross-stack export가 제거되지 않도록 현재 그래프를 유지한다.
+        BaseStacks baseStacks = createBaseStacks(context);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
+        createDnsStack(context, albStack);
+
+        MonitoringStackProps monitoringProps = new MonitoringStackProps(
+                baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getDbSg(),
+                baseStacks.networkStack().getAdminApiSg(),
+                baseStacks.networkStack().getCustomerApiSg(),
+                PortConfig.getAdminServerPort(),
+                PortConfig.getCustomerServerPort(),
+                MonitoringConfig.fromEnv()
+        );
+        new MonitoringStack(
+                context.app(),
+                MONITORING_STACK_ID,
+                context.stackProps(),
+                monitoringProps
+        );
+
+        new MskStack(
+                context.app(),
+                MSK_STACK_ID,
+                context.stackProps(),
+                baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getKafkaBrokerSg()
         );
     }
 
