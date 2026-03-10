@@ -6,6 +6,14 @@ import java.util.Arrays;
 import java.util.List;
 
 public record WorkerConfig(
+        String workerBatchJobName,
+        String workerSpringProfile,
+        String workerMskBootstrapServers,
+        String workerKafkaSecurityProtocol,
+        String workerKafkaSaslMechanism,
+        String workerKafkaSaslJaasConfig,
+        String workerKafkaSaslCallbackHandlerClass,
+
         String workerRunWindow,
 
         int workerPollSeconds,
@@ -18,6 +26,8 @@ public record WorkerConfig(
         String workerTaskDefinitionArn,
         String workerTaskDefinitionFamily,
         String workerContainerName,
+        String workerTaskRoleArn,
+        String workerExecutionRoleArn,
 
         List<String> workerSubnetIds,
         List<String> workerSecurityGroupIds
@@ -25,6 +35,13 @@ public record WorkerConfig(
 ) {
     public static WorkerConfig fromEnv() {
         WorkerConfig config = new WorkerConfig(
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_BATCH_JOB_NAME),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SPRING_PROFILE),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_MSK_BOOTSTRAP_SERVERS),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SECURITY_PROTOCOL),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_MECHANISM),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_JAAS_CONFIG),
+                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_CALLBACK_HANDLER_CLASS),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_RUN_WINDOW),
 
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_POLL_SECONDS)),
@@ -36,6 +53,8 @@ public record WorkerConfig(
                 AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_ARN.key(), ""),
                 AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY.key(), ""),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_CONTAINER_NAME),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_TASK_ROLE_ARN.key(), ""),
+                AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_WORKER_EXECUTION_ROLE_ARN.key(), ""),
 
                 parsingToNonEmptyList(
                         AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SUBNET_IDS),
