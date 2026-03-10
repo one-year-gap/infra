@@ -58,12 +58,6 @@ on:
         required: false
       COUNSELING_ANALYTICS_CONTAINER_NAME:
         required: false
-      ON_DEMAND_WORKER_TASK_DEFINITION_ARN:
-        required: false
-      ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:
-        required: false
-      ON_DEMAND_WORKER_CONTAINER_NAME:
-        required: false
       COUNSELING_ANALYTICS_CLUSTER_NAME:
         required: false
       COUNSELING_ANALYTICS_SERVICE_NAME:
@@ -161,9 +155,6 @@ env:
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
   COUNSELING_ANALYTICS_CONTAINER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CONTAINER_NAME }}
-  ON_DEMAND_WORKER_TASK_DEFINITION_ARN: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_ARN }}
-  ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY }}
-  ON_DEMAND_WORKER_CONTAINER_NAME: ${{ secrets.ON_DEMAND_WORKER_CONTAINER_NAME }}
   COUNSELING_ANALYTICS_CLUSTER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CLUSTER_NAME }}
   COUNSELING_ANALYTICS_SERVICE_NAME: ${{ secrets.COUNSELING_ANALYTICS_SERVICE_NAME }}
   DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
@@ -183,15 +174,13 @@ env:
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
   WORKER_SOURCE_REPO: one-year-gap/worker
-  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/intelligence-server
+  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/counseling-analytics
 
 jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
       source_repo_code: ${{ steps.resolve.outputs.source_repo_code }}
-      source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
-      source_repo_key: ${{ steps.resolve.outputs.source_repo_key }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
@@ -424,15 +413,12 @@ jobs:
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
 
-            const sourceRepoKey = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
+            const sourceRepoKey = canonicalSourceRepoName(repo);
             const sourceRepoCode = resolveSourceRepoCode(sourceRepoKey);
             const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
             core.setOutput("source_repo_code", sourceRepoCode);
-
-            core.setOutput("source_repo_name", repo);
-            core.setOutput("source_repo_key", sourceRepoKey);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
@@ -473,7 +459,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_key != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_code != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -483,8 +469,6 @@ jobs:
         shell: bash
         env:
           SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -598,16 +582,6 @@ jobs:
             BASE="${LATEST_TAG#v}"
           fi
 
-          if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
-            LATEST_TAG_SHA="$(git rev-list -n 1 "$LATEST_TAG")"
-            if [ "$LATEST_TAG_SHA" = "$TARGET_SHA" ]; then
-              echo "Reuse existing tag for same target sha: $LATEST_TAG"
-              echo "version_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-              echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
-
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
 
           case "$RELEASE_LEVEL" in
@@ -644,8 +618,7 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO_NAME:   ${{ needs.resolve-context.outputs.source_repo_name }}
-          SOURCE_REPO_KEY:    ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE:   ${{ needs.resolve-context.outputs.source_repo_code }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -664,15 +637,23 @@ jobs:
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
-            const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
-            const sourceRepoKey = String(process.env.SOURCE_REPO_KEY || "").trim();
+            const sourceRepoSelector = String(
+              process.env.SOURCE_REPO_CODE ||
+              process.env.SOURCE_REPO_KEY ||
+              process.env.SOURCE_REPO_NAME ||
+              ""
+            ).trim();
             const sourceRepoMap = {
               repo1: process.env.API_SERVER_SOURCE_REPO,
+              "api-server": process.env.API_SERVER_SOURCE_REPO,
               repo2: process.env.ADMIN_WEB_SOURCE_REPO,
+              "admin-web": process.env.ADMIN_WEB_SOURCE_REPO,
               repo3: process.env.WORKER_SOURCE_REPO,
-              repo4: process.env.COUNSELING_ANALYTICS_SOURCE_REPO
+              worker: process.env.WORKER_SOURCE_REPO,
+              repo4: process.env.COUNSELING_ANALYTICS_SOURCE_REPO,
+              "counseling-analytics": process.env.COUNSELING_ANALYTICS_SOURCE_REPO
             };
-            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoKey] || "").trim();
+            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoSelector] || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
@@ -688,7 +669,7 @@ jobs:
             if (String(process.env.DEPLOY_COUNSELING_BATCH) === "true") deployLabels.push("deploy:counseling-batch");
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo. source_repo_name=${sourceRepoName}, source_repo_key=${sourceRepoKey}, resolved=${sourceRepoRaw}`);
+              throw new Error(`invalid source repo. source_repo_selector=${sourceRepoSelector}, resolved=${sourceRepoRaw}`);
             }
 
             try {
@@ -731,11 +712,11 @@ jobs:
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -752,11 +733,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -811,11 +792,11 @@ jobs:
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -832,11 +813,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -890,11 +871,11 @@ jobs:
         id: resolve-worker-repo
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -911,11 +892,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -977,11 +958,11 @@ jobs:
         id: resolve-counseling-repo
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -998,11 +979,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
+          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -1200,10 +1181,10 @@ jobs:
       - create-tag
       - build-and-push-worker
       - deploy-ecs
-    # 실행 책임은 Step Functions가 기본이며, CI 직접 실행은 CI_RUN_WORKER_TASK=true일 때만 허용한다.
+    # deploy:worker 시 task definition revision은 항상 갱신하고,
+    # CI 직접 실행은 CI_RUN_WORKER_TASK=true일 때만 추가로 수행한다.
     if: |
       always() &&
-      needs.resolve-context.outputs.ci_run_worker_task == 'true' &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
@@ -1223,11 +1204,12 @@ jobs:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register worker task definition revision and run task
+      - name: Register worker task definition revision and optionally run task
         id: run-task
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          CI_RUN_WORKER_TASK: ${{ needs.resolve-context.outputs.ci_run_worker_task }}
         run: |
           set -euo pipefail
 
@@ -1348,6 +1330,65 @@ jobs:
             exit 1
           fi
 
+          container_name="${WORKER_CONTAINER_NAME:-worker}"
+
+          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+
+          task_role_arn="$(echo "$taskdef_json" | jq -r '.taskRoleArn // empty')"
+          if [ -z "$task_role_arn" ]; then
+            echo "::error::Source worker task definition must define taskRoleArn for AWS_MSK_IAM authentication."
+            exit 1
+          fi
+
+          effective_container_name="$container_name"
+          if ! echo "$taskdef_json" | jq -e --arg cname "$container_name" 'any(.containerDefinitions[]; .name == $cname)' >/dev/null; then
+            fallback_container_name="$(echo "$taskdef_json" | jq -r '.containerDefinitions[0].name // empty')"
+            if [ -z "$fallback_container_name" ]; then
+              echo "::error::Could not determine container name from source task definition."
+              exit 1
+            fi
+            echo "Container '${container_name}' not found in source task definition. Use '${fallback_container_name}' as override target."
+            effective_container_name="$fallback_container_name"
+          fi
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$effective_container_name"             '
+            .containerDefinitions |= (
+              if any(.[]; .name == $cname)
+              then map(if .name == $cname then .image = $img else . end)
+              else (.[0].image = $img | .)
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            ' )"
+
+          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+
+          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+            echo "::error::Failed to register worker task definition revision."
+            exit 1
+          fi
+
+          if [ "${CI_RUN_WORKER_TASK}" != "true" ]; then
+            echo "Skip ecs run-task because CI_RUN_WORKER_TASK is not enabled. Registered worker task definition revision only."
+            {
+              echo "worker_image=$WORKER_IMAGE"
+              echo "worker_task_definition=$new_taskdef_arn"
+              echo "worker_task_arn="
+              echo "worker_cluster_name="
+              echo "worker_container_name=$effective_container_name"
+              echo "worker_started_by="
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           cluster_name="${WORKER_CLUSTER_NAME:-}"
           if [ -z "$cluster_name" ]; then
             cluster_name="$(aws cloudformation describe-stack-resources               --region "$AWS_REGION"               --stack-name EcsClusterStack               --query "StackResources[?ResourceType=='AWS::ECS::Cluster']|[0].PhysicalResourceId"               --output text 2>/dev/null || true)"
@@ -1406,52 +1447,7 @@ jobs:
             assign_public_ip="DISABLED"
           fi
 
-          container_name="${WORKER_CONTAINER_NAME:-worker}"
           run_started_by="worker-release-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-
-          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
-
-          task_role_arn="$(echo "$taskdef_json" | jq -r '.taskRoleArn // empty')"
-          if [ -z "$task_role_arn" ]; then
-            echo "::error::Source worker task definition must define taskRoleArn for AWS_MSK_IAM authentication."
-            exit 1
-          fi
-
-          effective_container_name="$container_name"
-          if ! echo "$taskdef_json" | jq -e --arg cname "$container_name" 'any(.containerDefinitions[]; .name == $cname)' >/dev/null; then
-            fallback_container_name="$(echo "$taskdef_json" | jq -r '.containerDefinitions[0].name // empty')"
-            if [ -z "$fallback_container_name" ]; then
-              echo "::error::Could not determine container name from source task definition."
-              exit 1
-            fi
-            echo "Container '${container_name}' not found in source task definition. Use '${fallback_container_name}' as override target."
-            effective_container_name="$fallback_container_name"
-          fi
-
-          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$effective_container_name"             '
-            .containerDefinitions |= (
-              if any(.[]; .name == $cname)
-              then map(if .name == $cname then .image = $img else . end)
-              else (.[0].image = $img | .)
-              end
-            )
-            | del(
-                .taskDefinitionArn,
-                .revision,
-                .status,
-                .requiresAttributes,
-                .compatibilities,
-                .registeredAt,
-                .registeredBy
-              )
-            ' )"
-
-          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
-
-          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
-            echo "::error::Failed to register worker task definition revision."
-            exit 1
-          fi
 
           msk_bootstrap_brokers="$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
@@ -1682,7 +1678,7 @@ jobs:
               echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
               exit 1
             fi
-            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null | head -n1 || true)"
+            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
@@ -1773,38 +1769,19 @@ jobs:
             exit 1
           fi
 
-          target_taskdef_family="${ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:-}"
-          if [ -z "$target_taskdef_family" ]; then
-            echo "::error::Set ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY for dedicated analysis batch family"
-            exit 1
-          fi
-
-          source_taskdef="${ON_DEMAND_WORKER_TASK_DEFINITION_ARN:-}"
+          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
-            source_taskdef="$(aws ecs list-task-definitions \
-              --region "$AWS_REGION" \
-              --family-prefix "$target_taskdef_family" \
-              --sort DESC \
-              --max-items 1 \
-              --query 'taskDefinitionArns[0]' \
-              --output text 2>/dev/null | head -n1 || true)"
-          fi
-          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
-            source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
-          fi
-          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
-            source_taskdef_family="${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}"
-            if [ -z "$source_taskdef_family" ]; then
-              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY as source template"
+            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
+              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
               exit 1
             fi
             source_taskdef="$(aws ecs list-task-definitions \
               --region "$AWS_REGION" \
-              --family-prefix "$source_taskdef_family" \
+              --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY" \
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
-              --output text 2>/dev/null | head -n1 || true)"
+              --output text 2>/dev/null || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
@@ -1815,7 +1792,7 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
-          container_name="${ON_DEMAND_WORKER_CONTAINER_NAME:-${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}}"
+          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
 
           taskdef_json="$(aws ecs describe-task-definition \
             --region "$AWS_REGION" \
@@ -1826,10 +1803,7 @@ jobs:
           new_taskdef_json="$(echo "$taskdef_json" | jq \
             --arg img "$IMAGE_URI" \
             --arg cname "$container_name" \
-            --arg family "$target_taskdef_family" \
             '
-            .family = $family
-            |
             .containerDefinitions |= (
               if any(.[]; .name == $cname)
               then map(if .name == $cname then .image = $img else . end)
