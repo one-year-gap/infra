@@ -189,8 +189,11 @@ public class EcsClusterStack extends Stack {
                 API_SERVER_KAFKA_SECRET_ID,
                 AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME)
         );
-        addIfPresent(adminApiSecretsManagerArns, apiServerKafkaSecret.getSecretArn());
-        addIfPresent(customerApiSecretsManagerArns, apiServerKafkaSecret.getSecretArn());
+        String apiServerKafkaSecretArnPattern = buildSecretArnPattern(
+                AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME)
+        );
+        addIfPresent(adminApiSecretsManagerArns, apiServerKafkaSecretArnPattern);
+        addIfPresent(customerApiSecretsManagerArns, apiServerKafkaSecretArnPattern);
 
         /**
          * 6) Recommendation runtime secret
@@ -215,8 +218,8 @@ public class EcsClusterStack extends Stack {
         /**
          * 8) Props Setup
          */
-        Map<String, String> adminApiEnvironment = buildAdminApiEnvironment();
-        Map<String, String> customerApiEnvironment = buildCustomerApiEnvironment();
+        Map<String, String> adminApiEnvironment = buildAdminApiEnvironment(mskBootstrapBrokersSaslIam);
+        Map<String, String> customerApiEnvironment = buildCustomerApiEnvironment(mskBootstrapBrokersSaslIam);
 
         FargateWebServiceProps adminWebServiceProps = new FargateWebServiceProps(
                 this,
@@ -374,9 +377,16 @@ public class EcsClusterStack extends Stack {
         return recommendationRealtimeService;
     }
 
-    private Map<String, String> buildAdminApiEnvironment() {
+    private Map<String, String> buildAdminApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
+        // api-server가 secret import 실패 시 localhost 기본값으로 떨어지지 않도록
+        // Kafka 연결값은 컨테이너 env로도 직접 주입한다.
+        env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
         // admin-api는 private recommendation service를 내부 DNS로 호출한다.
         env.put(
                 "FASTAPI_BASE_URL",
@@ -387,9 +397,14 @@ public class EcsClusterStack extends Stack {
         return env;
     }
 
-    private Map<String, String> buildCustomerApiEnvironment() {
+    private Map<String, String> buildCustomerApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
+        env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
         return env;
     }
 
@@ -449,6 +464,15 @@ public class EcsClusterStack extends Stack {
         if (!trimmed.isEmpty() && !target.contains(trimmed)) {
             target.add(trimmed);
         }
+    }
+
+    private String buildSecretArnPattern(String secretName) {
+        return String.format(
+                "arn:aws:secretsmanager:%s:%s:secret:%s*",
+                this.getRegion(),
+                this.getAccount(),
+                secretName
+        );
     }
 
     private List<PolicyStatement> resolveKmsDecryptPolicies(String singleArnEnvKey, String csvArnEnvKey) {
