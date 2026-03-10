@@ -1,6 +1,7 @@
 package com.myorg.workflow.ondemand;
 
 import com.myorg.config.OnDemandWorkflowConfig;
+import com.myorg.config.WorkerConfig;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.services.lambda.IFunction;
 import software.amazon.awscdk.services.stepfunctions.CatchProps;
@@ -32,7 +33,7 @@ import java.util.Map;
  * 배치 전용 Step Functions 정의 빌더.
  *
  * 목적:
- * - 추천 실시간 서비스와 분리된 1회성 analysis batch 실행
+ * - 추천 실시간 서비스와 분리된 1회성 Spring Batch 실행
  * - DynamoDB conditional put으로 선점 락 보장
  * - ECS RunTask 완료 및 exit code 검증
  * - 선택적 business validation 후 항상 lock 해제
@@ -42,7 +43,7 @@ public class OnDemandWorkflowDefinitionBuilder {
     /**
      * 워크플로우 상태 전이:
      * 1) lock 획득
-     * 2) batch task 실행(APP_MODE=batch)
+     * 2) Spring Batch task 실행
      * 3) task 종료/exit code 확인
      * 4) 선택적 business validation
      * 5) lock 해제
@@ -117,7 +118,7 @@ public class OnDemandWorkflowDefinitionBuilder {
                 .resultPath("$.config")
                 .build());
 
-        // batch는 ECS service를 올리지 않고 one-off RunTask만 실행한다.
+        // Spring Batch는 ECS service를 올리지 않고 one-off RunTask만 실행한다.
         CallAwsService runBatchTask = new CallAwsService(scope, "RunBatchTask", CallAwsServiceProps.builder()
                 .service("ecs")
                 .action("runTask")
@@ -417,10 +418,18 @@ public class OnDemandWorkflowDefinitionBuilder {
     }
 
     private static List<Object> workerEnvironmentOverrides(OnDemandWorkflowConfig config) {
+        WorkerConfig workerConfig = config.workerConfig();
         List<Object> env = new ArrayList<>();
 
-        env.add(Map.of("Name", "APP_MODE", "Value", "batch"));
-        env.add(Map.of("Name", "WORKFLOW_RUN_WINDOW", "Value", config.workerConfig().workerRunWindow()));
+        // 현재 worker 이미지는 entrypoint가 CLI 인자를 전달하지 않으므로
+        // Spring Batch 실행에 필요한 설정은 env override만 사용한다.
+        env.add(Map.of("Name", "SPRING_PROFILES_ACTIVE", "Value", workerConfig.workerSpringProfile()));
+        env.add(Map.of("Name", "SPRING_BATCH_JOB_NAME", "Value", workerConfig.workerBatchJobName()));
+
+        // worker는 application.kafka.yml에서 MSK_BOOTSTRAP_SERVERS만 읽고 보안 설정은 코드/설정 파일에 이미 고정돼 있다.
+        env.add(Map.of("Name", "MSK_BOOTSTRAP_SERVERS", "Value", workerConfig.workerMskBootstrapServers()));
+
+        env.add(Map.of("Name", "WORKFLOW_RUN_WINDOW", "Value", workerConfig.workerRunWindow()));
         env.add(Map.of("Name", "WORKFLOW_LOCK_KEY", "Value", config.dynamoDBConfig().lockKey()));
         env.add(Map.of("Name", "WORKFLOW_EXECUTION_ID", "Value.$", "$$.Execution.Id"));
         env.add(Map.of("Name", "WORKFLOW_RUN_ID", "Value.$", "$$.Execution.Id"));
@@ -428,19 +437,18 @@ public class OnDemandWorkflowDefinitionBuilder {
         if (config.hasExpectedReleaseTag()) {
             env.add(Map.of("Name", "WORKFLOW_EXPECTED_RELEASE", "Value", config.expectedReleaseTag()));
         }
-        if (config.workerConfig().workerInputBasePath() != null && !config.workerConfig().workerInputBasePath().isBlank()) {
-            env.add(Map.of("Name", "WORKFLOW_INPUT_PATH", "Value.$", statesFormatPath(config.workerConfig().workerInputBasePath())));
+        if (workerConfig.workerInputBasePath() != null && !workerConfig.workerInputBasePath().isBlank()) {
+            env.add(Map.of("Name", "WORKFLOW_INPUT_PATH", "Value.$", statesFormatPath(workerConfig.workerInputBasePath())));
         }
-        if (config.workerConfig().workerOutputBasePath() != null && !config.workerConfig().workerOutputBasePath().isBlank()) {
-            env.add(Map.of("Name", "WORKFLOW_OUTPUT_PATH", "Value.$", statesFormatPath(config.workerConfig().workerOutputBasePath())));
+        if (workerConfig.workerOutputBasePath() != null && !workerConfig.workerOutputBasePath().isBlank()) {
+            env.add(Map.of("Name", "WORKFLOW_OUTPUT_PATH", "Value.$", statesFormatPath(workerConfig.workerOutputBasePath())));
         }
-        if (config.workerConfig().workerLockBasePath() != null && !config.workerConfig().workerLockBasePath().isBlank()) {
-            env.add(Map.of("Name", "WORKFLOW_LOCK_PATH", "Value.$", statesFormatPath(config.workerConfig().workerLockBasePath())));
+        if (workerConfig.workerLockBasePath() != null && !workerConfig.workerLockBasePath().isBlank()) {
+            env.add(Map.of("Name", "WORKFLOW_LOCK_PATH", "Value.$", statesFormatPath(workerConfig.workerLockBasePath())));
         }
 
         return env;
     }
-
     private static String statesFormatPath(String basePath) {
         String escaped = basePath == null ? "" : basePath.replace("'", "''");
         return "States.Format('{}/{}', '" + escaped + "', $$.Execution.Id)";

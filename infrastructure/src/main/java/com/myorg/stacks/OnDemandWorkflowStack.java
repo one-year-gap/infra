@@ -16,6 +16,7 @@ import software.amazon.awscdk.services.events.Rule;
 import software.amazon.awscdk.services.events.Schedule;
 import software.amazon.awscdk.services.events.targets.SfnStateMachine;
 import software.amazon.awscdk.services.events.targets.SfnStateMachineProps;
+import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.lambda.Function;
 import software.amazon.awscdk.services.stepfunctions.Chain;
 import software.amazon.awscdk.services.stepfunctions.DefinitionBody;
@@ -100,6 +101,35 @@ public class OnDemandWorkflowStack extends Stack {
                 .timeout(Duration.minutes(config.workflowTimeoutMinutes()))
                 .tracingEnabled(true)
                 .build());
+
+        stateMachine.addToRolePolicy(PolicyStatement.Builder.create()
+                .actions(java.util.List.of("ecs:TagResource"))
+                .resources(java.util.List.of(String.format(
+                        "arn:aws:ecs:%s:%s:task/%s/*",
+                        this.getRegion(),
+                        this.getAccount(),
+                        resources.clusterName()
+                )))
+                .build());
+
+        if (!resources.workerConfig().workerTaskRoleArn().isBlank() || !resources.workerConfig().workerExecutionRoleArn().isBlank()) {
+            java.util.List<String> passRoleResources = new java.util.ArrayList<>();
+            if (!resources.workerConfig().workerTaskRoleArn().isBlank()) {
+                passRoleResources.add(resources.workerConfig().workerTaskRoleArn());
+            }
+            if (!resources.workerConfig().workerExecutionRoleArn().isBlank()) {
+                passRoleResources.add(resources.workerConfig().workerExecutionRoleArn());
+            }
+
+            // ECS RunTask가 worker task/execution role을 사용할 수 있도록 필요한 role만 PassRole 허용한다.
+            stateMachine.addToRolePolicy(PolicyStatement.Builder.create()
+                    .actions(java.util.List.of("iam:PassRole"))
+                    .resources(passRoleResources)
+                    .conditions(java.util.Map.of(
+                            "StringEquals", java.util.Map.of("iam:PassedToService", "ecs-tasks.amazonaws.com")
+                    ))
+                    .build());
+        }
 
         /*
         * =================================================================

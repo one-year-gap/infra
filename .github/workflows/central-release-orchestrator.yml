@@ -189,13 +189,13 @@ jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
+      source_repo_code: ${{ steps.resolve.outputs.source_repo_code }}
       source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
       source_repo_key: ${{ steps.resolve.outputs.source_repo_key }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
       tag_namespace: ${{ steps.resolve.outputs.tag_namespace }}
-      deploy_labels_csv: ${{ steps.resolve.outputs.deploy_labels_csv }}
       deploy_api_server: ${{ steps.resolve.outputs.deploy_api_server }}
       deploy_admin_web: ${{ steps.resolve.outputs.deploy_admin_web }}
       deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
@@ -286,6 +286,22 @@ jobs:
                 return "analysis-server";
               }
               return "counseling-analytics";
+            }
+
+            function resolveSourceRepoCode(repoName) {
+              switch (repoName) {
+                case "api-server":
+                  return "repo1";
+                case "admin-fe":
+                  return "repo2";
+                case "worker":
+                  return "repo3";
+                case "counseling-analytics":
+                case "intelligence-server":
+                  return "repo4";
+                default:
+                  throw new Error(`unsupported source repo name: ${repoName}`);
+              }
             }
 
             let sourceRepo;
@@ -410,6 +426,11 @@ jobs:
 
             const sourceRepoKey = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
+            const sourceRepoKey = canonicalSourceRepoName(repo);
+            const sourceRepoCode = resolveSourceRepoCode(sourceRepoKey);
+            const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
+
+            core.setOutput("source_repo_code", sourceRepoCode);
             const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
             core.setOutput("source_repo_name", repo);
@@ -418,7 +439,6 @@ jobs:
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
             core.setOutput("tag_namespace",     tagNamespace);
-            core.setOutput("deploy_labels_csv", deployLabels.join(","));
             core.setOutput("deploy_api_server", deployLabels.includes("deploy:api-server") ? "true" : "false");
             core.setOutput("deploy_admin_web", deployLabels.includes("deploy:admin-web") ? "true" : "false");
             core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
@@ -464,6 +484,7 @@ jobs:
         id: guard-source
         shell: bash
         env:
+          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
           SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
           SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
@@ -473,13 +494,13 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          case "${SOURCE_REPO_KEY}" in
-            api-server) SOURCE_REPO="${API_SERVER_SOURCE_REPO}" ;;
-            admin-fe) SOURCE_REPO="${ADMIN_WEB_SOURCE_REPO}" ;;
-            worker) SOURCE_REPO="${WORKER_SOURCE_REPO}" ;;
-            counseling-analytics) SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO}" ;;
+          case "${SOURCE_REPO_CODE}" in
+            repo1) SOURCE_REPO="${API_SERVER_SOURCE_REPO}" ;;
+            repo2) SOURCE_REPO="${ADMIN_WEB_SOURCE_REPO}" ;;
+            repo3) SOURCE_REPO="${WORKER_SOURCE_REPO}" ;;
+            repo4) SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO}" ;;
             *)
-              echo "::error::resolve-context output source_repo_key is invalid. source_repo_name=${SOURCE_REPO_NAME} source_repo_key=${SOURCE_REPO_KEY}"
+              echo "::error::resolve-context output source_repo_code is invalid. source_repo_code=${SOURCE_REPO_CODE}"
               exit 1
               ;;
           esac
@@ -635,17 +656,23 @@ jobs:
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
           TAG_NAMESPACE:      ${{ needs.resolve-context.outputs.tag_namespace }}
-          DEPLOY_LABELS_CSV:  ${{ needs.resolve-context.outputs.deploy_labels_csv }}
+          DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
+          DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
+          DEPLOY_CUSTOMER_WEB: ${{ needs.resolve-context.outputs.deploy_customer_web }}
+          DEPLOY_WORKER: ${{ needs.resolve-context.outputs.deploy_worker }}
+          DEPLOY_COUNSELING_ANALYTICS: ${{ needs.resolve-context.outputs.deploy_counseling_analytics }}
+          DEPLOY_RECOMMENDATION_REALTIME: ${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}
+          DEPLOY_COUNSELING_BATCH: ${{ needs.resolve-context.outputs.deploy_counseling_batch }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
             const sourceRepoKey = String(process.env.SOURCE_REPO_KEY || "").trim();
             const sourceRepoMap = {
-              "api-server": process.env.API_SERVER_SOURCE_REPO,
-              "admin-fe": process.env.ADMIN_WEB_SOURCE_REPO,
-              "worker": process.env.WORKER_SOURCE_REPO,
-              "counseling-analytics": process.env.COUNSELING_ANALYTICS_SOURCE_REPO
+              repo1: process.env.API_SERVER_SOURCE_REPO,
+              repo2: process.env.ADMIN_WEB_SOURCE_REPO,
+              repo3: process.env.WORKER_SOURCE_REPO,
+              repo4: process.env.COUNSELING_ANALYTICS_SOURCE_REPO
             };
             const sourceRepoRaw  = String(sourceRepoMap[sourceRepoKey] || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
@@ -653,10 +680,14 @@ jobs:
             const targetSha      = process.env.TARGET_SHA;
             const releaseLabel   = process.env.RELEASE_LABEL;
             const tagNamespace   = String(process.env.TAG_NAMESPACE || "").trim();
-            const deployLabels   = String(process.env.DEPLOY_LABELS_CSV || "")
-              .split(",")
-              .map(v => v.trim())
-              .filter(Boolean);
+            const deployLabels = [];
+            if (String(process.env.DEPLOY_API_SERVER) === "true") deployLabels.push("deploy:api-server");
+            if (String(process.env.DEPLOY_ADMIN_WEB) === "true") deployLabels.push("deploy:admin-web");
+            if (String(process.env.DEPLOY_CUSTOMER_WEB) === "true") deployLabels.push("deploy:customer-web");
+            if (String(process.env.DEPLOY_WORKER) === "true") deployLabels.push("deploy:worker");
+            if (String(process.env.DEPLOY_COUNSELING_ANALYTICS) === "true") deployLabels.push("deploy:counseling-analytics");
+            if (String(process.env.DEPLOY_RECOMMENDATION_REALTIME) === "true") deployLabels.push("deploy:recommendation-realtime");
+            if (String(process.env.DEPLOY_COUNSELING_BATCH) === "true") deployLabels.push("deploy:counseling-batch");
 
             if (!owner || !repo) {
               throw new Error(`invalid source repo. source_repo_name=${sourceRepoName}, source_repo_key=${sourceRepoKey}, resolved=${sourceRepoRaw}`);
