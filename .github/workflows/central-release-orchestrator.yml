@@ -234,6 +234,13 @@ jobs:
                 .filter(Boolean);
             }
 
+            function canonicalSourceRepoName(repoName) {
+              if (repoName === "counseling-analytics" || repoName === "intelligence-server") {
+                return "counseling-analytics";
+              }
+              return repoName;
+            }
+
             function resolveTagNamespace(repoName, deployLabels) {
               if (repoName !== "counseling-analytics") {
                 return "";
