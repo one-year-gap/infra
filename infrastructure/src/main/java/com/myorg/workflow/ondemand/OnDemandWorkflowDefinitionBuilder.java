@@ -137,7 +137,6 @@ public class OnDemandWorkflowDefinitionBuilder {
                         "Overrides", Map.of(
                                 "ContainerOverrides", List.of(Map.of(
                                         "Name", resources.workerConfig().workerContainerName(),
-                                        "Command", workerCommandOverrides(config),
                                         "Environment", workerEnvironmentOverrides(config)
                                 ))
                         ),
@@ -422,7 +421,8 @@ public class OnDemandWorkflowDefinitionBuilder {
         WorkerConfig workerConfig = config.workerConfig();
         List<Object> env = new ArrayList<>();
 
-        // 현재 worker 이미지는 entrypoint가 CLI 인자를 전달하지 않으므로 Spring 설정은 env override로 주입한다.
+        // 현재 worker 이미지는 entrypoint가 CLI 인자를 전달하지 않으므로
+        // Spring Batch 실행에 필요한 설정은 env override만 사용한다.
         env.add(Map.of("Name", "SPRING_PROFILES_ACTIVE", "Value", workerConfig.workerSpringProfile()));
         env.add(Map.of("Name", "SPRING_BATCH_JOB_NAME", "Value", workerConfig.workerBatchJobName()));
 
@@ -449,20 +449,6 @@ public class OnDemandWorkflowDefinitionBuilder {
 
         return env;
     }
-
-    private static List<String> workerCommandOverrides(OnDemandWorkflowConfig config) {
-        WorkerConfig workerConfig = config.workerConfig();
-        return List.of(
-                "--spring.batch.job.name=" + workerConfig.workerBatchJobName(),
-                "--spring.kafka.bootstrap-servers=" + workerConfig.workerMskBootstrapServers(),
-                "--spring.kafka.properties.security.protocol=" + workerConfig.workerKafkaSecurityProtocol(),
-                "--spring.kafka.properties.sasl.mechanism=" + workerConfig.workerKafkaSaslMechanism(),
-                "--spring.kafka.properties.sasl.jaas.config=" + workerConfig.workerKafkaSaslJaasConfig(),
-                "--spring.kafka.properties.sasl.client.callback.handler.class=" + workerConfig.workerKafkaSaslCallbackHandlerClass(),
-                "--spring.profiles.active=" + workerConfig.workerSpringProfile()
-        );
-    }
-
     private static String statesFormatPath(String basePath) {
         String escaped = basePath == null ? "" : basePath.replace("'", "''");
         return "States.Format('{}/{}', '" + escaped + "', $$.Execution.Id)";

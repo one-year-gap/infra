@@ -9,10 +9,6 @@ public record WorkerConfig(
         String workerBatchJobName,
         String workerSpringProfile,
         String workerMskBootstrapServers,
-        String workerKafkaSecurityProtocol,
-        String workerKafkaSaslMechanism,
-        String workerKafkaSaslJaasConfig,
-        String workerKafkaSaslCallbackHandlerClass,
 
         String workerRunWindow,
 
@@ -38,10 +34,6 @@ public record WorkerConfig(
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_BATCH_JOB_NAME),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_SPRING_PROFILE),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_MSK_BOOTSTRAP_SERVERS),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SECURITY_PROTOCOL),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_MECHANISM),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_JAAS_CONFIG),
-                AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_KAFKA_SASL_CALLBACK_HANDLER_CLASS),
                 AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_RUN_WINDOW),
 
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ON_DEMAND_WORKER_POLL_SECONDS)),
