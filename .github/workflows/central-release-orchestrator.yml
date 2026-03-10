@@ -707,6 +707,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
     if: needs.resolve-context.outputs.deploy_api_server == 'true'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: holliverse
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d holliverse"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Resolve api-server source repository
         id: resolve-api-repo
@@ -741,6 +755,18 @@ jobs:
             git checkout "$SOURCE_SHA"
           fi
 
+      - name: Patch api-server Dockerfile for CI database access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -q '^ARG DB_URL=' Dockerfile; then
+            echo "Dockerfile already exposes build-time DB arguments."
+            exit 0
+          fi
+
+          perl -0pi -e 's/FROM eclipse-temurin:17-jdk AS builder/FROM eclipse-temurin:17-jdk AS builder\nARG DB_URL=jdbc:\/\/postgresql:\/\/host.docker.internal:5432\/holliverse\nARG DB_USER_ADMIN=postgres\nARG DB_PASS_ADMIN=postgres\nARG FLYWAY_USER=postgres\nARG FLYWAY_PASSWORD=postgres\nENV DB_URL=\${DB_URL} DB_USER_ADMIN=\${DB_USER_ADMIN} DB_PASS_ADMIN=\${DB_PASS_ADMIN} FLYWAY_USER=\${FLYWAY_USER} FLYWAY_PASSWORD=\${FLYWAY_PASSWORD}/' Dockerfile
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -762,11 +788,20 @@ jobs:
           REPO="${REGISTRY}/${API_SERVER_REPOSITORY}"
           CUSTOMER_TAG="customer-${VERSION_TAG}"
           ADMIN_TAG="admin-${VERSION_TAG}"
+          common_build_args=(
+            --platform linux/amd64
+            --add-host=host.docker.internal:host-gateway
+            --build-arg DB_URL=jdbc:postgresql://host.docker.internal:5432/holliverse
+            --build-arg DB_USER_ADMIN=postgres
+            --build-arg DB_PASS_ADMIN=postgres
+            --build-arg FLYWAY_USER=postgres
+            --build-arg FLYWAY_PASSWORD=postgres
+          )
 
           if aws ecr describe-images --repository-name "${API_SERVER_REPOSITORY}" --image-ids imageTag="${CUSTOMER_TAG}" >/dev/null 2>&1; then
             echo "Skip push: ${REPO}:${CUSTOMER_TAG} already exists."
           else
-            docker build --platform linux/amd64 \
+            docker build "${common_build_args[@]}" \
               --build-arg PROFILE=customer \
               -t "${REPO}:${CUSTOMER_TAG}" \
               .
@@ -776,7 +811,7 @@ jobs:
           if aws ecr describe-images --repository-name "${API_SERVER_REPOSITORY}" --image-ids imageTag="${ADMIN_TAG}" >/dev/null 2>&1; then
             echo "Skip push: ${REPO}:${ADMIN_TAG} already exists."
           else
-            docker build --platform linux/amd64 \
+            docker build "${common_build_args[@]}" \
               --build-arg PROFILE=admin \
               -t "${REPO}:${ADMIN_TAG}" \
               .
