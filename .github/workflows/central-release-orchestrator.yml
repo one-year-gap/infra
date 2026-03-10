@@ -426,12 +426,10 @@ jobs:
 
             const sourceRepoKey = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
-            const sourceRepoKey = canonicalSourceRepoName(repo);
             const sourceRepoCode = resolveSourceRepoCode(sourceRepoKey);
             const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
             core.setOutput("source_repo_code", sourceRepoCode);
-            const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
             core.setOutput("source_repo_name", repo);
             core.setOutput("source_repo_key", sourceRepoKey);
