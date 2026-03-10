@@ -58,6 +58,12 @@ on:
         required: false
       COUNSELING_ANALYTICS_CONTAINER_NAME:
         required: false
+      ON_DEMAND_WORKER_TASK_DEFINITION_ARN:
+        required: false
+      ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:
+        required: false
+      ON_DEMAND_WORKER_CONTAINER_NAME:
+        required: false
       COUNSELING_ANALYTICS_CLUSTER_NAME:
         required: false
       COUNSELING_ANALYTICS_SERVICE_NAME:
@@ -155,6 +161,9 @@ env:
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY }}
   COUNSELING_ANALYTICS_CONTAINER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CONTAINER_NAME }}
+  ON_DEMAND_WORKER_TASK_DEFINITION_ARN: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_ARN }}
+  ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY: ${{ secrets.ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY }}
+  ON_DEMAND_WORKER_CONTAINER_NAME: ${{ secrets.ON_DEMAND_WORKER_CONTAINER_NAME }}
   COUNSELING_ANALYTICS_CLUSTER_NAME: ${{ secrets.COUNSELING_ANALYTICS_CLUSTER_NAME }}
   COUNSELING_ANALYTICS_SERVICE_NAME: ${{ secrets.COUNSELING_ANALYTICS_SERVICE_NAME }}
   DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }}
@@ -174,13 +183,15 @@ env:
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
   WORKER_SOURCE_REPO: one-year-gap/worker
-  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/counseling-analytics
+  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/intelligence-server
 
 jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
       source_repo_code: ${{ steps.resolve.outputs.source_repo_code }}
+      source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
+      source_repo_key: ${{ steps.resolve.outputs.source_repo_key }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
@@ -413,12 +424,17 @@ jobs:
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
 
+            const sourceRepoKey = canonicalSourceRepoName(repo);
             const releaseLevel = releaseLabel.replace("release:", "");
             const sourceRepoKey = canonicalSourceRepoName(repo);
             const sourceRepoCode = resolveSourceRepoCode(sourceRepoKey);
             const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
             core.setOutput("source_repo_code", sourceRepoCode);
+            const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
+
+            core.setOutput("source_repo_name", repo);
+            core.setOutput("source_repo_key", sourceRepoKey);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
@@ -459,7 +475,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_code != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_key != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -469,6 +485,8 @@ jobs:
         shell: bash
         env:
           SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -582,6 +600,16 @@ jobs:
             BASE="${LATEST_TAG#v}"
           fi
 
+          if git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+            LATEST_TAG_SHA="$(git rev-list -n 1 "$LATEST_TAG")"
+            if [ "$LATEST_TAG_SHA" = "$TARGET_SHA" ]; then
+              echo "Reuse existing tag for same target sha: $LATEST_TAG"
+              echo "version_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+              echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
 
           case "$RELEASE_LEVEL" in
@@ -618,7 +646,8 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO_CODE:   ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_NAME:   ${{ needs.resolve-context.outputs.source_repo_name }}
+          SOURCE_REPO_KEY:    ${{ needs.resolve-context.outputs.source_repo_key }}
           API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
           ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
@@ -637,14 +666,15 @@ jobs:
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
-            const sourceRepoCode = String(process.env.SOURCE_REPO_CODE || "").trim();
+            const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
+            const sourceRepoKey = String(process.env.SOURCE_REPO_KEY || "").trim();
             const sourceRepoMap = {
               repo1: process.env.API_SERVER_SOURCE_REPO,
               repo2: process.env.ADMIN_WEB_SOURCE_REPO,
               repo3: process.env.WORKER_SOURCE_REPO,
               repo4: process.env.COUNSELING_ANALYTICS_SOURCE_REPO
             };
-            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoCode] || "").trim();
+            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoKey] || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
@@ -660,7 +690,7 @@ jobs:
             if (String(process.env.DEPLOY_COUNSELING_BATCH) === "true") deployLabels.push("deploy:counseling-batch");
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo. source_repo_code=${sourceRepoCode}, resolved=${sourceRepoRaw}`);
+              throw new Error(`invalid source repo. source_repo_name=${sourceRepoName}, source_repo_key=${sourceRepoKey}, resolved=${sourceRepoRaw}`);
             }
 
             try {
@@ -703,11 +733,11 @@ jobs:
         id: resolve-api-repo
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -724,11 +754,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "api-server" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -783,11 +813,11 @@ jobs:
         id: resolve-admin-repo
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -804,11 +834,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "admin-fe" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -862,11 +892,11 @@ jobs:
         id: resolve-worker-repo
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -883,11 +913,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "worker" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -949,11 +979,11 @@ jobs:
         id: resolve-counseling-repo
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
           else
             echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
@@ -970,11 +1000,11 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO_KEY: ${{ needs.resolve-context.outputs.source_repo_key }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
+          if [[ "${SOURCE_REPO_KEY}" == "counseling-analytics" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -1654,7 +1684,7 @@ jobs:
               echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
               exit 1
             fi
-            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
+            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null | head -n1 || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
@@ -1745,19 +1775,38 @@ jobs:
             exit 1
           fi
 
-          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          target_taskdef_family="${ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY:-}"
+          if [ -z "$target_taskdef_family" ]; then
+            echo "::error::Set ON_DEMAND_WORKER_TASK_DEFINITION_FAMILY for dedicated analysis batch family"
+            exit 1
+          fi
+
+          source_taskdef="${ON_DEMAND_WORKER_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
-            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
-              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
+            source_taskdef="$(aws ecs list-task-definitions \
+              --region "$AWS_REGION" \
+              --family-prefix "$target_taskdef_family" \
+              --sort DESC \
+              --max-items 1 \
+              --query 'taskDefinitionArns[0]' \
+              --output text 2>/dev/null | head -n1 || true)"
+          fi
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          fi
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            source_taskdef_family="${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}"
+            if [ -z "$source_taskdef_family" ]; then
+              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY as source template"
               exit 1
             fi
             source_taskdef="$(aws ecs list-task-definitions \
               --region "$AWS_REGION" \
-              --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY" \
+              --family-prefix "$source_taskdef_family" \
               --sort DESC \
               --max-items 1 \
               --query 'taskDefinitionArns[0]' \
-              --output text 2>/dev/null || true)"
+              --output text 2>/dev/null | head -n1 || true)"
           fi
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
@@ -1768,7 +1817,7 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
-          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
+          container_name="${ON_DEMAND_WORKER_CONTAINER_NAME:-${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}}"
 
           taskdef_json="$(aws ecs describe-task-definition \
             --region "$AWS_REGION" \
@@ -1779,7 +1828,10 @@ jobs:
           new_taskdef_json="$(echo "$taskdef_json" | jq \
             --arg img "$IMAGE_URI" \
             --arg cname "$container_name" \
+            --arg family "$target_taskdef_family" \
             '
+            .family = $family
+            |
             .containerDefinitions |= (
               if any(.[]; .name == $cname)
               then map(if .name == $cname then .image = $img else . end)
