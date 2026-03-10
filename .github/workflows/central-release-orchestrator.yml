@@ -781,7 +781,7 @@ jobs:
             exit 0
           fi
 
-          perl -0pi -e 's/FROM eclipse-temurin:17-jdk AS builder/FROM eclipse-temurin:17-jdk AS builder\nARG DB_URL=jdbc:\/\/postgresql:\/\/host.docker.internal:5432\/holliverse\nARG DB_USER_ADMIN=app_admin\nARG DB_PASS_ADMIN=app_admin_pw\nARG FLYWAY_USER=db_migrator\nARG FLYWAY_PASSWORD=db_migrator_pw\nENV DB_URL=\${DB_URL} DB_USER_ADMIN=\${DB_USER_ADMIN} DB_PASS_ADMIN=\${DB_PASS_ADMIN} FLYWAY_USER=\${FLYWAY_USER} FLYWAY_PASSWORD=\${FLYWAY_PASSWORD}/' Dockerfile
+          perl -0pi -e 's/FROM eclipse-temurin:17-jdk AS builder/FROM eclipse-temurin:17-jdk AS builder\nARG DB_URL=jdbc:\/\/postgresql:\/\/host.docker.internal:5432\/holliverse\nARG DB_USER_ADMIN=postgres\nARG DB_PASS_ADMIN=postgres\nARG FLYWAY_USER=postgres\nARG FLYWAY_PASSWORD=postgres\nENV DB_URL=\${DB_URL} DB_USER_ADMIN=\${DB_USER_ADMIN} DB_PASS_ADMIN=\${DB_PASS_ADMIN} FLYWAY_USER=\${FLYWAY_USER} FLYWAY_PASSWORD=\${FLYWAY_PASSWORD}/' Dockerfile
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -808,10 +808,10 @@ jobs:
             --platform linux/amd64
             --add-host=host.docker.internal:host-gateway
             --build-arg DB_URL=jdbc:postgresql://host.docker.internal:5432/holliverse
-            --build-arg DB_USER_ADMIN=app_admin
-            --build-arg DB_PASS_ADMIN=app_admin_pw
-            --build-arg FLYWAY_USER=db_migrator
-            --build-arg FLYWAY_PASSWORD=db_migrator_pw
+            --build-arg DB_USER_ADMIN=postgres
+            --build-arg DB_PASS_ADMIN=postgres
+            --build-arg FLYWAY_USER=postgres
+            --build-arg FLYWAY_PASSWORD=postgres
           )
 
           if aws ecr describe-images --repository-name "${API_SERVER_REPOSITORY}" --image-ids imageTag="${CUSTOMER_TAG}" >/dev/null 2>&1; then
