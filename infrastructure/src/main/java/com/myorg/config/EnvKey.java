@@ -48,6 +48,8 @@ public enum EnvKey {
     MSK_BROKER_INSTANCE_TYPE("kafka.t3.small"),
     MSK_BROKER_NODES("4"),
     MSK_BROKER_VOLUME_GIB("10"),
+    CLICK_LOG_TOPIC("click.logs.raw.v1"),
+    CLICK_LOG_CONSUMER_GROUP_ID("click-log-consumer"),
 
     /*
      * =================================================================

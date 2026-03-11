@@ -88,6 +88,9 @@ public class EcsClusterStack extends Stack {
      */
     private static final String DATABASE_NAME = "holliverse";
 
+    /**
+     * ECS 서비스와 런타임 연결값 구성.
+     */
     public EcsClusterStack(
             Construct scope,
             String id,
@@ -110,6 +113,7 @@ public class EcsClusterStack extends Stack {
             Secret dbSecret,
 
             // MskStack에서 내려오는 것
+            String mskClusterName,
             String mskClusterArn,
             String mskBootstrapBrokersSaslIam,
 
@@ -190,7 +194,7 @@ public class EcsClusterStack extends Stack {
                 "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN",
                 "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS"
         );
-        List<PolicyStatement> mskTaskPolicies = buildMskTaskPolicies(mskClusterArn);
+        List<PolicyStatement> mskTaskPolicies = buildMskTaskPolicies(mskClusterName, mskClusterArn);
 
         /**
          * 5) API Server Kafka secret
@@ -429,17 +433,27 @@ public class EcsClusterStack extends Stack {
         return analysisServerService;
     }
 
+    /**
+     * admin-api Kafka 연동 환경값 구성.
+     */
     private Map<String, String> buildAdminApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
+        // DB 풀 상한
         env.put("DB_POOL_MAX", "10");
+        // DB 풀 하한
         env.put("DB_POOL_MIN", "1");
+        // Kafka 시크릿 이름
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
         // api-server가 secret import 실패 시 localhost 기본값으로 떨어지지 않도록
         // Kafka 연결값은 컨테이너 env로도 직접 주입한다.
         env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        // SASL 프로토콜
         env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        // SASL 메커니즘
         env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+        // IAM 로그인 모듈
         env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+        // IAM 콜백 핸들러
         env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
         // admin-api는 private recommendation service를 내부 DNS로 호출한다.
         env.put(
@@ -451,19 +465,35 @@ public class EcsClusterStack extends Stack {
         return env;
     }
 
+    /**
+     * customer-api producer 환경값 구성.
+     */
     private Map<String, String> buildCustomerApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
+        // DB 풀 상한
         env.put("DB_POOL_MAX", "10");
+        // DB 풀 하한
         env.put("DB_POOL_MIN", "1");
+        // Kafka 시크릿 이름
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
+        // IAM 브로커 주소
         env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        // SASL 프로토콜
         env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        // SASL 메커니즘
         env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+        // IAM 로그인 모듈
         env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+        // IAM 콜백 핸들러
         env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+        // 클릭 로그 토픽 이름
+        env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
         return env;
     }
 
+    /**
+     * realtime 서비스 환경값 구성.
+     */
     private Map<String, String> buildRecommendationRealtimeEnvironment(
             int recommendationRealtimePort,
             int adminApiPort,
@@ -486,6 +516,9 @@ public class EcsClusterStack extends Stack {
         return env;
     }
 
+    /**
+     * analysis-server consumer 환경값 구성.
+     */
     private Map<String, String> buildAnalysisServerEnvironment(
             int analysisServerPort,
             String mskBootstrapBrokersSaslIam
@@ -497,22 +530,42 @@ public class EcsClusterStack extends Stack {
         env.put("APP_PORT", String.valueOf(analysisServerPort));
         env.put("PYTHONUNBUFFERED", "1");
 
+        // consumer 활성값
         env.put("KAFKA_CONSUMER_ENABLED", "true");
+        // IAM 브로커 주소
         env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        // SASL 프로토콜
         env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        // SASL 메커니즘
         env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
+        // AWS 리전 값
         env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
+        // 분석 요청 토픽
         env.put("KAFKA_ANALYSIS_REQUEST_TOPIC", "analysis.request.v1");
+        // 분석 응답 토픽
         env.put("KAFKA_ANALYSIS_RESPONSE_TOPIC", "analysis.response.v1");
+        // 클릭 로그 토픽 이름
+        env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
+        // 클릭 로그 그룹 이름
+        env.put("KAFKA_CLICK_LOG_CONSUMER_GROUP_ID", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID));
+        // 분석 그룹 이름
         env.put("KAFKA_CONSUMER_GROUP_ID", "counseling-analytics-consumer");
+        // offset 초기 정책
         env.put("KAFKA_AUTO_OFFSET_RESET", "earliest");
+        // 배치 크기
         env.put("KAFKA_BATCH_SIZE", "1000");
+        // poll 대기 시간
         env.put("KAFKA_POLL_TIMEOUT_MS", "1000");
+        // 메시지 로그 여부
         env.put("KAFKA_LOG_EACH_MESSAGE", "true");
+        // 결과 로그 상한
         env.put("KAFKA_LOG_RESULT_LIMIT", "20");
+        // 응답 재시도 횟수
         env.put("KAFKA_RESPONSE_MAX_ATTEMPTS", "3");
 
+        // DB 풀 하한
         env.put("POSTGRES_POOL_MIN_SIZE", "1");
+        // DB 풀 상한
         env.put("POSTGRES_POOL_MAX_SIZE", "2");
         return env;
     }
@@ -584,23 +637,22 @@ public class EcsClusterStack extends Stack {
         return merged;
     }
 
-    private List<PolicyStatement> buildMskTaskPolicies(String mskClusterArn) {
+    private List<PolicyStatement> buildMskTaskPolicies(String mskClusterName, String mskClusterArn) {
         // Stack이 가진 region/account 컨텍스트를 사용해야 CDK 테스트에서도 외부 환경변수에 의존하지 않는다.
         String region = this.getRegion();
         String accountId = this.getAccount();
-        String clusterName = AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME);
 
         String topicArnPattern = String.format(
                 "arn:aws:kafka:%s:%s:topic/%s/*",
                 region,
                 accountId,
-                clusterName
+                mskClusterName
         );
         String groupArnPattern = String.format(
                 "arn:aws:kafka:%s:%s:group/%s/*",
                 region,
                 accountId,
-                clusterName
+                mskClusterName
         );
 
         return List.of(

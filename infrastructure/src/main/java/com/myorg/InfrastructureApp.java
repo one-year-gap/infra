@@ -324,6 +324,18 @@ public class InfrastructureApp {
 
     private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks, MskStack mskStack) {
         String legacyApiImageTag = AppConfig.getOptionalValueOrDefault("API_IMAGE_TAG", DEFAULT_IMAGE_TAG);
+        String ecsMskClusterName = AppConfig.getOptionalValueOrDefault(
+                "ECS_MSK_CLUSTER_NAME_OVERRIDE",
+                AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME)
+        );
+        String ecsMskClusterArn = AppConfig.getOptionalValueOrDefault(
+                "ECS_MSK_CLUSTER_ARN_OVERRIDE",
+                mskStack.getCluster().getAttrArn()
+        );
+        String ecsMskBootstrapBrokers = AppConfig.getOptionalValueOrDefault(
+                "ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE",
+                mskStack.getBootstrapBrokersSaslIam()
+        );
 
         return new EcsClusterStack(
                 context.app(),
@@ -339,8 +351,9 @@ public class InfrastructureApp {
                 baseStacks.ecrStack().getApiServerRepo(),
                 baseStacks.rdsStack().getRds(),
                 baseStacks.rdsStack().getDbSecret(),
-                mskStack.getCluster().getAttrArn(),
-                mskStack.getBootstrapBrokersSaslIam(),
+                ecsMskClusterName,
+                ecsMskClusterArn,
+                ecsMskBootstrapBrokers,
                 PortConfig.getAdminWebPort(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),

@@ -94,6 +94,7 @@ class EcsClusterStackTest {
                 apiServerRepo,
                 rds,
                 dbSecret,
+                "holliverse-msk",
                 "arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk/test-cluster-id",
                 "b-1.test.holliverse-msk.c2.kafka.ap-northeast-2.amazonaws.com:9098",
                 3001,
@@ -147,6 +148,13 @@ class EcsClusterStackTest {
         template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
                 "Name", "analysis-server"
         ));
+
+        String templateJson = template.toJSON().toString();
+        org.assertj.core.api.Assertions.assertThat(templateJson)
+                .contains("KAFKA_CLICK_LOG_TOPIC")
+                .contains("click.logs.raw.v1")
+                .contains("KAFKA_CLICK_LOG_CONSUMER_GROUP_ID")
+                .contains("click-log-consumer");
     }
 
     @SuppressWarnings("unchecked")
