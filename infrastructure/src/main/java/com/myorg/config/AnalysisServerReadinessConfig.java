@@ -30,13 +30,11 @@ public record AnalysisServerReadinessConfig(
 
         AnalysisServerReadinessConfig config = new AnalysisServerReadinessConfig(
                 AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_SERVICE_NAME),
-                parseNonNegativeInt(
-                        AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_UP_DESIRED_COUNT.key(), "1"),
-                        EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_UP_DESIRED_COUNT
+                parseScaleUpDesiredCount(
+                        AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_UP_DESIRED_COUNT.key(), "1")
                 ),
-                parseNonNegativeInt(
-                        AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT.key(), "0"),
-                        EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT
+                parseScaleDownDesiredCount(
+                        AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT.key(), "0")
                 ),
                 AppConfig.getRequiredValue(EnvKey.ON_DEMAND_ANALYSIS_SERVER_PROBE_VPC_ID.key()),
                 parseRequiredCsv(
@@ -92,6 +90,22 @@ public record AnalysisServerReadinessConfig(
             throw new IllegalStateException(key.key() + " 값은 1 이상이어야 합니다.");
         }
         return parsed;
+    }
+
+    private static int parsePositiveInt(String value, EnvKey key) {
+        int parsed = Integer.parseInt(value);
+        if (parsed <= 0) {
+            throw new IllegalStateException(key.key() + " 값은 1 이상이어야 합니다.");
+        }
+        return parsed;
+    }
+
+    static int parseScaleUpDesiredCount(String value) {
+        return parsePositiveInt(value, EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_UP_DESIRED_COUNT);
+    }
+
+    static int parseScaleDownDesiredCount(String value) {
+        return parseNonNegativeInt(value, EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT);
     }
 
     private static int parseNonNegativeInt(String value, EnvKey key) {
