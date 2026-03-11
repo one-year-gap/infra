@@ -14,18 +14,18 @@ import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ec2.SubnetType;
 import software.amazon.awscdk.services.ec2.Vpc;
-import software.amazon.awscdk.services.msk.CfnServerlessCluster;
-import software.amazon.awscdk.services.msk.CfnServerlessClusterProps;
+import software.amazon.awscdk.services.msk.CfnCluster;
+import software.amazon.awscdk.services.msk.CfnClusterProps;
 import software.constructs.Construct;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Recommendation realtime consumer 연결 MSK Serverless 전용 스택.
+ * Recommendation realtime consumer 연결용 Provisioned MSK 스택.
  */
 public class MskStack extends Stack {
-    private final CfnServerlessCluster serverlessCluster;
+    private final CfnCluster cluster;
     private final String bootstrapBrokersSaslIam;
 
     public MskStack(
@@ -42,22 +42,34 @@ public class MskStack extends Stack {
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
                 .build()).getSubnetIds();
 
-        this.serverlessCluster = new CfnServerlessCluster(this, "ServerlessCluster",
-                CfnServerlessClusterProps.builder()
+        this.cluster = new CfnCluster(this, "ProvisionedCluster",
+                CfnClusterProps.builder()
                         .clusterName(AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME))
-                        .clientAuthentication(CfnServerlessCluster.ClientAuthenticationProperty.builder()
-                                .sasl(CfnServerlessCluster.SaslProperty.builder()
-                                        .iam(CfnServerlessCluster.IamProperty.builder()
+                        .kafkaVersion(AppConfig.getValueOrDefault(EnvKey.MSK_KAFKA_VERSION))
+                        .numberOfBrokerNodes(Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.MSK_BROKER_NODES)))
+                        .brokerNodeGroupInfo(CfnCluster.BrokerNodeGroupInfoProperty.builder()
+                                .clientSubnets(privateSubnetIds)
+                                .instanceType(AppConfig.getValueOrDefault(EnvKey.MSK_BROKER_INSTANCE_TYPE))
+                                .securityGroups(List.of(kafkaBrokerSg.getSecurityGroupId()))
+                                .storageInfo(CfnCluster.StorageInfoProperty.builder()
+                                        .ebsStorageInfo(CfnCluster.EBSStorageInfoProperty.builder()
+                                                .volumeSize(Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.MSK_BROKER_VOLUME_GIB)))
+                                                .build())
+                                        .build())
+                                .build())
+                        .clientAuthentication(CfnCluster.ClientAuthenticationProperty.builder()
+                                .sasl(CfnCluster.SaslProperty.builder()
+                                        .iam(CfnCluster.IamProperty.builder()
                                                 .enabled(true)
                                                 .build())
                                         .build())
                                 .build())
-                        .vpcConfigs(List.of(
-                                CfnServerlessCluster.VpcConfigProperty.builder()
-                                        .subnetIds(privateSubnetIds)
-                                        .securityGroups(List.of(kafkaBrokerSg.getSecurityGroupId()))
-                                        .build()
-                        ))
+                        .encryptionInfo(CfnCluster.EncryptionInfoProperty.builder()
+                                .encryptionInTransit(CfnCluster.EncryptionInTransitProperty.builder()
+                                        .clientBroker("TLS")
+                                        .inCluster(true)
+                                        .build())
+                                .build())
                         .tags(Map.of(
                                 "service", "recommendation-realtime",
                                 "component", "kafka",
@@ -68,8 +80,8 @@ public class MskStack extends Stack {
         AwsSdkCall getBootstrapBrokers = AwsSdkCall.builder()
                 .service("Kafka")
                 .action("getBootstrapBrokers")
-                .parameters(Map.of("ClusterArn", serverlessCluster.getAttrArn()))
-                .physicalResourceId(PhysicalResourceId.of(serverlessCluster.getAttrArn()))
+                .parameters(Map.of("ClusterArn", cluster.getAttrArn()))
+                .physicalResourceId(PhysicalResourceId.of(cluster.getAttrArn()))
                 .build();
 
         AwsCustomResource bootstrapBrokers = new AwsCustomResource(this, "BootstrapBrokersLookup",
@@ -78,20 +90,20 @@ public class MskStack extends Stack {
                         .onUpdate(getBootstrapBrokers)
                         .policy(AwsCustomResourcePolicy.fromSdkCalls(
                                 SdkCallsPolicyOptions.builder()
-                                        .resources(List.of(serverlessCluster.getAttrArn()))
+                                        .resources(List.of(cluster.getAttrArn()))
                                         .build()
                         ))
                         .build());
-        bootstrapBrokers.getNode().addDependency(serverlessCluster);
+        bootstrapBrokers.getNode().addDependency(cluster);
 
-        CfnOutput.Builder.create(this, "MskServerlessClusterArn")
-                .value(serverlessCluster.getAttrArn())
-                .description("MSK Serverless Cluster ARN")
+        CfnOutput.Builder.create(this, "MskClusterArn")
+                .value(cluster.getAttrArn())
+                .description("MSK Cluster ARN")
                 .build();
 
-        CfnOutput.Builder.create(this, "MskServerlessClusterName")
+        CfnOutput.Builder.create(this, "MskClusterName")
                 .value(AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME))
-                .description("MSK Serverless Cluster Name")
+                .description("MSK Cluster Name")
                 .build();
 
         CfnOutput.Builder.create(this, "MskBrokerSecurityGroupId")
@@ -107,8 +119,8 @@ public class MskStack extends Stack {
                 .build();
     }
 
-    public CfnServerlessCluster getServerlessCluster() {
-        return serverlessCluster;
+    public CfnCluster getCluster() {
+        return cluster;
     }
 
     public String getBootstrapBrokersSaslIam() {

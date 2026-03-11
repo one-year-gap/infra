@@ -165,7 +165,7 @@ public class InfrastructureApp {
     }
 
     /**
-     * Recommendation realtime consumer 전용 MSK Serverless 스택 배포
+     * Recommendation realtime consumer 전용 Provisioned MSK 스택 배포
      */
     private static void deployMsk(DeploymentContext context) {
         // NetworkStack을 참조하는 기존 스택들을 함께 synth해서
@@ -339,7 +339,7 @@ public class InfrastructureApp {
                 baseStacks.ecrStack().getApiServerRepo(),
                 baseStacks.rdsStack().getRds(),
                 baseStacks.rdsStack().getDbSecret(),
-                mskStack.getServerlessCluster().getAttrArn(),
+                mskStack.getCluster().getAttrArn(),
                 mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminWebPort(),
                 PortConfig.getAdminServerPort(),

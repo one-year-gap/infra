@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class MskStackTest {
 
     @Test
-    @DisplayName("MSK Serverless 스택 기본 리소스가 생성되어야 한다.")
-    void should_create_msk_serverless_resources() {
+    @DisplayName("Provisioned MSK 스택 기본 리소스가 생성되어야 한다.")
+    void should_create_provisioned_msk_resources() {
         App app = new App();
         Stack fixtureStack = new Stack(app, "MskFixtureStack");
 
@@ -39,16 +39,23 @@ class MskStackTest {
 
         Template template = Template.fromStack(mskStack);
 
-        Map<String, Map<String, Object>> clusters = template.findResources("AWS::MSK::ServerlessCluster");
+        Map<String, Map<String, Object>> clusters = template.findResources("AWS::MSK::Cluster");
         Map<String, Map<String, Object>> customResources = template.findResources("Custom::AWS");
 
         assertEquals(1, clusters.size());
         assertEquals(1, customResources.size());
 
-        template.hasResourceProperties("AWS::MSK::ServerlessCluster", Map.of(
-                "ClusterName", "holliverse-msk-serverless"
+        template.hasResourceProperties("AWS::MSK::Cluster", Map.of(
+                "ClusterName", "holliverse-msk",
+                "KafkaVersion", "3.8.x",
+                "NumberOfBrokerNodes", 4
         ));
-        template.hasOutput("MskServerlessClusterArn", Map.of());
+        template.hasOutput("MskClusterArn", Map.of());
         template.hasOutput("MskBootstrapBrokersSaslIam", Map.of());
+
+        String templateJson = template.toJSON().toString();
+        org.assertj.core.api.Assertions.assertThat(templateJson)
+                .contains("kafka.t3.small")
+                .contains("TLS");
     }
 }

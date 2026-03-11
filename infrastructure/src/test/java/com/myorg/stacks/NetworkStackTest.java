@@ -61,7 +61,7 @@ class NetworkStackTest {
         analysisServerSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Analysis Server ECS Security Group");
         kafkaBrokerSgLogicalId = findSecurityGroupLogicalIdByDescription(
-                "MSK Serverless Broker Security Group");
+                "MSK Broker Security Group");
         adminAlbSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Admin Application Load Balancer Security Group");
         adminWebSgLogicalId = findSecurityGroupLogicalIdByDescription(

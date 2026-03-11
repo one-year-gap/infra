@@ -86,9 +86,12 @@ class MonitoringStackTest {
                 .contains("Grafana to MSK IAM")
                 .contains("FromPort=9098")
                 .contains("kafka-cluster:Connect")
-                .contains("arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk-serverless/*")
-                .contains("arn:aws:kafka:ap-northeast-2:123456789012:topic/holliverse-msk-serverless/*")
-                .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk-serverless/*");
+                .contains("kafka-cluster:DeleteTopic")
+                .contains("kafka-cluster:AlterTopic")
+                .contains("kafka-cluster:AlterTopicDynamicConfiguration")
+                .contains("arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk/*")
+                .contains("arn:aws:kafka:ap-northeast-2:123456789012:topic/holliverse-msk/*")
+                .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk/*");
         assertThat(renderedUserData.length()).isLessThan(25_600);
     }
 

@@ -97,7 +97,7 @@ public class NetworkStack extends Stack {
                 .vpc(vpc)
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
-                .description("MSK Serverless Broker Security Group")
+                .description("MSK Broker Security Group")
                 .build();
 
         this.adminAlbSg = SecurityGroup.Builder.create(this, "AdminAlbSg")
