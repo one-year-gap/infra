@@ -308,6 +308,11 @@ public class NetworkStack extends Stack {
                 Port.tcp(recommendationRealtimePort),
                 "To Recommendation Realtime only"
         );
+        adminApiSg.addEgressRule(
+                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Port.tcp(analysisServerPort),
+                "To Analysis Server only"
+        );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
