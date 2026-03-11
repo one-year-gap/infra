@@ -117,6 +117,10 @@ public enum EnvKey {
     RECOMMENDATION_REALTIME_DESIRED_COUNT("1"),
     RECOMMENDATION_REALTIME_RUNTIME_SECRET_NAME("holliverse/prod/counseling-analytics/runtime"),
     RECOMMENDATION_REALTIME_CLOUD_MAP_NAME("recommendation-realtime"),
+    ANALYSIS_SERVER_PORT("8000"),
+    ANALYSIS_SERVER_DESIRED_COUNT("0"),
+    ANALYSIS_SERVER_CLOUD_MAP_NAME("analysis-server"),
+    ANALYSIS_SERVER_SERVICE_NAME("analysis-server"),
 
     /*
      * =================================================================

@@ -332,6 +332,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getRecommendationRealtimeSg(),
+                baseStacks.networkStack().getAnalysisServerSg(),
                 baseStacks.ecrStack().getAdminWebRepo(),
                 baseStacks.ecrStack().getApiServerRepo(),
                 baseStacks.rdsStack().getRds(),

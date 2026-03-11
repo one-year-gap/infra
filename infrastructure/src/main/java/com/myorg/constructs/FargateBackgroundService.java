@@ -79,6 +79,10 @@ public class FargateBackgroundService extends Construct {
                 .desiredCount(props.desiredCount())
                 .enableExecuteCommand(props.enableEcsExec());
 
+        if (props.serviceName() != null && !props.serviceName().isBlank()) {
+            serviceBuilder.serviceName(props.serviceName());
+        }
+
         if (props.cloudMapNamespace() != null
                 && props.cloudMapServiceName() != null
                 && !props.cloudMapServiceName().isBlank()) {

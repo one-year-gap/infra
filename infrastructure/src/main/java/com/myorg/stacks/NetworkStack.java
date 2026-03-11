@@ -14,7 +14,7 @@ import java.util.List;
 
 public class NetworkStack extends Stack {
     private final Vpc vpc;
-    private final SecurityGroup customerAlbSg, customerApiSg, recommendationRealtimeSg, kafkaBrokerSg;
+    private final SecurityGroup customerAlbSg, customerApiSg, recommendationRealtimeSg, analysisServerSg, kafkaBrokerSg;
     private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg;
     private static final int MSK_IAM_PORT = 9098;
 
@@ -31,6 +31,7 @@ public class NetworkStack extends Stack {
         //Customer Web(ECS) Server
         Integer customerServerPort = config.customerServerPort();
         Integer recommendationRealtimePort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT));
+        Integer analysisServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_PORT));
 
 
         /*
@@ -82,6 +83,13 @@ public class NetworkStack extends Stack {
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
                 .description("Recommendation Realtime ECS Security Group")
+                .build();
+
+        this.analysisServerSg = SecurityGroup.Builder.create(this, "AnalysisServerSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("Analysis Server ECS Security Group")
                 .build();
 
         // Kafka broker SG는 client SG에서만 IAM/TLS 포트를 열어 private 통신만 허용
@@ -202,6 +210,41 @@ public class NetworkStack extends Stack {
                 "From Recommendation Realtime only"
         );
 
+        /*
+         * =================================================================
+         *                   Analysis Server Rules
+         * =================================================================
+         */
+        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
+        analysisServerSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
+        analysisServerSg.addEgressRule(
+                Peer.securityGroupId(dbSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "To DB only"
+        );
+
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Analysis Server only"
+        );
+        dbSg.addIngressRule(
+                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "Analysis Server to DB"
+        );
+        analysisServerSg.addIngressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(analysisServerPort),
+                "From readiness probe/admin API only"
+        );
+
 
         /*
          * =================================================================
@@ -293,6 +336,10 @@ public class NetworkStack extends Stack {
 
     public SecurityGroup getRecommendationRealtimeSg() {
         return recommendationRealtimeSg;
+    }
+
+    public SecurityGroup getAnalysisServerSg() {
+        return analysisServerSg;
     }
 
     public SecurityGroup getKafkaBrokerSg() {
