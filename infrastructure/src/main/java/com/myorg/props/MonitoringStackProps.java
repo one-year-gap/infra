@@ -9,6 +9,7 @@ public record MonitoringStackProps(
         SecurityGroup dbSg,
         SecurityGroup adminApiSg,
         SecurityGroup customerApiSg,
+        SecurityGroup kafkaBrokerSg,
         int adminApiPort,
         int customerApiPort,
         MonitoringConfig config

@@ -1,6 +1,7 @@
 package com.myorg.stacks;
 
 import com.myorg.config.AppConfig;
+import com.myorg.config.EnvKey;
 import com.myorg.constants.MonitoringConstants;
 import com.myorg.constants.NetworkConstants;
 import com.myorg.props.MonitoringStackProps;
@@ -11,8 +12,10 @@ import software.amazon.awscdk.services.ec2.*;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
+import software.amazon.awscdk.services.s3.assets.Asset;
 import software.constructs.Construct;
 
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -21,6 +24,7 @@ import java.util.List;
 public class MonitoringStack extends Stack {
     private final Instance grafanaInstance;
     private static final int[] PINPOINT_COLLECTOR_PORTS = {9991, 9992, 9993};
+    private static final int MSK_IAM_PORT = 9098;
 
     public MonitoringStack(
             Construct scope,
@@ -58,6 +62,14 @@ public class MonitoringStack extends Stack {
                 .toPort(stackProps.customerApiPort())
                 .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
                 .description("Grafana to Customer API Actuator")
+                .build();
+        CfnSecurityGroupIngress.Builder.create(this, "GrafanaToMskIngress")
+                .groupId(stackProps.kafkaBrokerSg().getSecurityGroupId())
+                .ipProtocol("tcp")
+                .fromPort(MSK_IAM_PORT)
+                .toPort(MSK_IAM_PORT)
+                .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
+                .description("Grafana to MSK IAM")
                 .build();
 
         for (int port : PINPOINT_COLLECTOR_PORTS) {
@@ -138,15 +150,71 @@ public class MonitoringStack extends Stack {
                 .resources(List.of(stackProps.config().lokiS3ObjectArn()))
                 .build());
 
+        // Kafka UI runs on this host and authenticates to MSK with the instance role.
+        String clusterName = AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME);
+        String clusterArnPattern = String.format(
+                "arn:aws:kafka:%s:%s:cluster/%s/*",
+                this.getRegion(),
+                this.getAccount(),
+                clusterName
+        );
+        String topicArnPattern = String.format(
+                "arn:aws:kafka:%s:%s:topic/%s/*",
+                this.getRegion(),
+                this.getAccount(),
+                clusterName
+        );
+        String groupArnPattern = String.format(
+                "arn:aws:kafka:%s:%s:group/%s/*",
+                this.getRegion(),
+                this.getAccount(),
+                clusterName
+        );
+
+        grafanaRole.addToPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "kafka-cluster:Connect",
+                        "kafka-cluster:DescribeCluster"
+                ))
+                .resources(List.of(clusterArnPattern))
+                .build());
+        grafanaRole.addToPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "kafka-cluster:DescribeTopic",
+                        "kafka-cluster:ReadData",
+                        "kafka-cluster:WriteData"
+                ))
+                .resources(List.of(topicArnPattern))
+                .build());
+        grafanaRole.addToPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "kafka-cluster:DescribeGroup",
+                        "kafka-cluster:AlterGroup"
+                ))
+                .resources(List.of(groupArnPattern))
+                .build());
+
+        Path monitoringBootstrapAssetPath = stackProps.config().renderMonitoringBootstrapAsset(
+                AppConfig.getRegion(),
+                AppConfig.getInternalDomainName(),
+                stackProps.adminApiPort(),
+                stackProps.customerApiPort()
+        );
+        Asset monitoringBootstrapAsset = Asset.Builder.create(this, "MonitoringBootstrapAsset")
+                .path(monitoringBootstrapAssetPath.toString())
+                .build();
+        monitoringBootstrapAsset.grantRead(grafanaRole);
 
         UserData userData = UserData.forLinux();
-        userData.addCommands(stackProps.config().grafanaUserDataCommands().toArray(String[]::new));
         userData.addCommands(
-                stackProps.config().monitoringBootstrapCommands(
-                        AppConfig.getRegion(),
-                        AppConfig.getInternalDomainName(),
-                        stackProps.adminApiPort(),
-                        stackProps.customerApiPort()).toArray(String[]::new));
+                "set -euxo pipefail",
+                "dnf install -y unzip",
+                "aws s3 cp s3://" + monitoringBootstrapAsset.getS3BucketName() + "/"
+                        + monitoringBootstrapAsset.getS3ObjectKey() + " /tmp/monitoring-bootstrap.zip",
+                "unzip -o /tmp/monitoring-bootstrap.zip -d /",
+                "chmod +x /opt/monitoring/install-monitoring.sh",
+                "/opt/monitoring/install-monitoring.sh"
+        );
 
         this.grafanaInstance = Instance.Builder.create(this, "GrafanaServer")
                 .vpc(stackProps.vpc())

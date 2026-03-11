@@ -8,6 +8,10 @@ import software.amazon.awscdk.services.ec2.InstanceSize;
 import software.amazon.awscdk.services.ec2.InstanceType;
 import software.amazon.awscdk.services.ec2.SubnetType;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -234,6 +238,53 @@ public record MonitoringConfig(
         return commands;
     }
 
+    /**
+     * Monitoring bootstrap 파일을 로컬 디렉터리에 렌더링해서 CDK asset으로 업로드할 수 있게 준비한다.
+     */
+    public Path renderMonitoringBootstrapAsset(
+            String region,
+            String internalDomain,
+            int adminApiPort,
+            int customerApiPort
+    ) {
+        Map<String, String> templateValues = buildTemplateValues(region, internalDomain, adminApiPort, customerApiPort);
+        Path assetRoot = Path.of("build/generated/monitoring-bootstrap");
+
+        recreateDirectory(assetRoot);
+
+        writeRenderedFile(assetRoot, MonitoringPaths.PREPARE_HOST_SCRIPT, MonitoringPaths.TPL_PREPARE_HOST, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.PROMETHEUS_CONFIG, MonitoringPaths.TPL_PROMETHEUS, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.LOKI_CONFIG, MonitoringPaths.TPL_LOKI, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.ALLOY_CONFIG, MonitoringPaths.TPL_ALLOY, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.BOOTSTRAP_SCRIPT, MonitoringPaths.TPL_BOOTSTRAP, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.DASHBOARD_SCRIPT, MonitoringPaths.TPL_DASHBOARD, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.PINPOINT_UP_SCRIPT, MonitoringPaths.TPL_PINPOINT_UP, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.PINPOINT_DOWN_SCRIPT, MonitoringPaths.TPL_PINPOINT_DOWN, templateValues);
+        writeRenderedFile(assetRoot, MonitoringPaths.PINPOINT_STAT_SCRIPT, MonitoringPaths.TPL_PINPOINT_STATUS, templateValues);
+
+        writeRenderedFile(
+                assetRoot,
+                "/etc/grafana/provisioning/datasources/prometheus.yaml",
+                MonitoringPaths.TPL_DS_PROMETHEUS,
+                templateValues
+        );
+        writeRenderedFile(
+                assetRoot,
+                "/etc/grafana/provisioning/datasources/cloudwatch.yaml",
+                MonitoringPaths.TPL_DS_CLOUDWATCH,
+                templateValues
+        );
+        writeRenderedFile(
+                assetRoot,
+                "/etc/grafana/provisioning/datasources/loki.yaml",
+                MonitoringPaths.TPL_DS_LOKI,
+                templateValues
+        );
+        writeText(assetRoot, MonitoringPaths.BASE_DIR + "/install-monitoring.sh", buildInstallMonitoringScript());
+
+        return assetRoot;
+    }
+
     // 쉘 템플릿 치환에 사용할 값을 현재 설정과 실행 컨텍스트로 구성
     private Map<String, String> buildTemplateValues(
             String region,
@@ -358,5 +409,72 @@ public record MonitoringConfig(
         return groups.stream()
                 .map(group -> "      named {\n        group_name = \"" + group.replace("\"", "\\\"") + "\"\n      }")
                 .collect(Collectors.joining("\n"));
+    }
+
+    private String buildInstallMonitoringScript() {
+        List<String> commands = new ArrayList<>();
+        commands.add("#!/usr/bin/env bash");
+        commands.addAll(grafanaUserDataCommands());
+        commands.add("chmod +x " + MonitoringPaths.PREPARE_HOST_SCRIPT);
+        commands.add(MonitoringPaths.PREPARE_HOST_SCRIPT);
+        commands.add("chmod +x " + MonitoringPaths.BOOTSTRAP_SCRIPT);
+        commands.add(MonitoringPaths.BOOTSTRAP_SCRIPT);
+        commands.add("chmod +x " + MonitoringPaths.DASHBOARD_SCRIPT);
+        commands.add("chmod +x " + MonitoringPaths.PINPOINT_UP_SCRIPT);
+        commands.add("chmod +x " + MonitoringPaths.PINPOINT_DOWN_SCRIPT);
+        commands.add("chmod +x " + MonitoringPaths.PINPOINT_STAT_SCRIPT);
+        commands.add("cat <<'EOF' >" + MonitoringPaths.BASE_DIR + "/pinpoint-quickstart.txt");
+        commands.add("Pinpoint ON  : sudo " + MonitoringPaths.PINPOINT_UP_SCRIPT);
+        commands.add("Pinpoint OFF : sudo " + MonitoringPaths.PINPOINT_DOWN_SCRIPT);
+        commands.add("Pinpoint STAT: sudo " + MonitoringPaths.PINPOINT_STAT_SCRIPT);
+        commands.add("EOF");
+        commands.add("if [ \"${MONITORING_REPROVISION_GRAFANA:-false}\" = \"true\" ]; then "
+                + "systemctl restart " + grafanaConfig.grafanaServiceName() + "; "
+                + "bash " + MonitoringPaths.DASHBOARD_SCRIPT + " || true; "
+                + "else echo '[INFO] Skip Grafana reprovision'; fi");
+        return String.join("\n", commands) + "\n";
+    }
+
+    private void recreateDirectory(Path directory) {
+        try {
+            if (Files.exists(directory)) {
+                try (var walk = Files.walk(directory)) {
+                    walk.sorted(Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try {
+                                    Files.delete(path);
+                                } catch (IOException ex) {
+                                    throw new IllegalStateException("Failed to clean monitoring asset directory: " + path, ex);
+                                }
+                            });
+                }
+            }
+            Files.createDirectories(directory);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to prepare monitoring asset directory: " + directory, ex);
+        }
+    }
+
+    private void writeRenderedFile(
+            Path assetRoot,
+            String targetPath,
+            String templatePath,
+            Map<String, String> templateValues
+    ) {
+        writeText(assetRoot, targetPath, ShellTemplateRenderer.renderTemplate(templatePath, templateValues));
+    }
+
+    private void writeText(Path assetRoot, String targetPath, String content) {
+        Path relativeTarget = assetRoot.resolve(stripLeadingSlash(targetPath));
+        try {
+            Files.createDirectories(relativeTarget.getParent());
+            Files.writeString(relativeTarget, content, StandardCharsets.UTF_8);
+        } catch (IOException ex) {
+            throw new IllegalStateException("Failed to write monitoring bootstrap file: " + relativeTarget, ex);
+        }
+    }
+
+    private String stripLeadingSlash(String path) {
+        return path.startsWith("/") ? path.substring(1) : path;
     }
 }
