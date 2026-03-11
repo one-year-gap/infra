@@ -27,7 +27,12 @@ import java.util.Map;
 public class MskStack extends Stack {
     private final CfnCluster cluster;
     private final String bootstrapBrokersSaslIam;
+    private final String clickLogTopicName;
+    private final String clickLogConsumerGroupId;
 
+    /**
+     * MSK 클러스터와 로그 토픽 명세 구성.
+     */
     public MskStack(
             Construct scope,
             String id,
@@ -57,6 +62,7 @@ public class MskStack extends Stack {
                                                 .build())
                                         .build())
                                 .build())
+                        // IAM 기반 인증 설정
                         .clientAuthentication(CfnCluster.ClientAuthenticationProperty.builder()
                                 .sasl(CfnCluster.SaslProperty.builder()
                                         .iam(CfnCluster.IamProperty.builder()
@@ -77,24 +83,40 @@ public class MskStack extends Stack {
                         ))
                         .build());
 
-        AwsSdkCall getBootstrapBrokers = AwsSdkCall.builder()
+        // provisioned bootstrap brokers 조회
+        AwsSdkCall getProvisionedBootstrapBrokers = AwsSdkCall.builder()
                 .service("Kafka")
                 .action("getBootstrapBrokers")
                 .parameters(Map.of("ClusterArn", cluster.getAttrArn()))
                 .physicalResourceId(PhysicalResourceId.of(cluster.getAttrArn()))
                 .build();
 
-        AwsCustomResource bootstrapBrokers = new AwsCustomResource(this, "BootstrapBrokersLookup",
+        AwsCustomResource provisionedBootstrapBrokers = new AwsCustomResource(this, "ProvisionedBootstrapBrokersLookup",
                 software.amazon.awscdk.customresources.AwsCustomResourceProps.builder()
-                        .onCreate(getBootstrapBrokers)
-                        .onUpdate(getBootstrapBrokers)
+                        .onCreate(getProvisionedBootstrapBrokers)
+                        .onUpdate(getProvisionedBootstrapBrokers)
                         .policy(AwsCustomResourcePolicy.fromSdkCalls(
                                 SdkCallsPolicyOptions.builder()
                                         .resources(List.of(cluster.getAttrArn()))
                                         .build()
                         ))
                         .build());
-        bootstrapBrokers.getNode().addDependency(cluster);
+        provisionedBootstrapBrokers.getNode().addDependency(cluster);
+
+        this.bootstrapBrokersSaslIam =
+                provisionedBootstrapBrokers.getResponseField("BootstrapBrokerStringSaslIam");
+        this.clickLogTopicName = AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC);
+        this.clickLogConsumerGroupId = AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID);
+
+        CfnOutput.Builder.create(this, "MskBrokerSecurityGroupId")
+                .value(kafkaBrokerSg.getSecurityGroupId())
+                .description("Security group attached to MSK brokers")
+                .build();
+
+        CfnOutput.Builder.create(this, "MskBootstrapBrokersSaslIam")
+                .value(bootstrapBrokersSaslIam)
+                .description("Bootstrap brokers for IAM-authenticated clients")
+                .build();
 
         CfnOutput.Builder.create(this, "MskClusterArn")
                 .value(cluster.getAttrArn())
@@ -106,16 +128,19 @@ public class MskStack extends Stack {
                 .description("MSK Cluster Name")
                 .build();
 
-        CfnOutput.Builder.create(this, "MskBrokerSecurityGroupId")
-                .value(kafkaBrokerSg.getSecurityGroupId())
-                .description("Security group attached to MSK brokers")
+        CfnOutput.Builder.create(this, "ProvisionedBootstrapBrokersSaslIam")
+                .value(bootstrapBrokersSaslIam)
+                .description("Provisioned bootstrap brokers for IAM-authenticated clients")
                 .build();
 
-        this.bootstrapBrokersSaslIam = bootstrapBrokers.getResponseField("BootstrapBrokerStringSaslIam");
+        CfnOutput.Builder.create(this, "ClickLogTopicName")
+                .value(clickLogTopicName)
+                .description("Click log topic name")
+                .build();
 
-        CfnOutput.Builder.create(this, "MskBootstrapBrokersSaslIam")
-                .value(bootstrapBrokersSaslIam)
-                .description("Bootstrap brokers for IAM-authenticated clients")
+        CfnOutput.Builder.create(this, "ClickLogConsumerGroupId")
+                .value(clickLogConsumerGroupId)
+                .description("Click log consumer group id")
                 .build();
     }
 
@@ -125,5 +150,13 @@ public class MskStack extends Stack {
 
     public String getBootstrapBrokersSaslIam() {
         return bootstrapBrokersSaslIam;
+    }
+
+    public String getClickLogTopicName() {
+        return clickLogTopicName;
+    }
+
+    public String getClickLogConsumerGroupId() {
+        return clickLogConsumerGroupId;
     }
 }

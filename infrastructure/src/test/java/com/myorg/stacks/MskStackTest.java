@@ -52,10 +52,15 @@ class MskStackTest {
         ));
         template.hasOutput("MskClusterArn", Map.of());
         template.hasOutput("MskBootstrapBrokersSaslIam", Map.of());
+        template.hasOutput("ProvisionedBootstrapBrokersSaslIam", Map.of());
+        template.hasOutput("ClickLogTopicName", Map.of());
+        template.hasOutput("ClickLogConsumerGroupId", Map.of());
 
         String templateJson = template.toJSON().toString();
         org.assertj.core.api.Assertions.assertThat(templateJson)
                 .contains("kafka.t3.small")
-                .contains("TLS");
+                .contains("TLS")
+                .contains("click.logs.raw.v1")
+                .contains("click-log-consumer");
     }
 }
