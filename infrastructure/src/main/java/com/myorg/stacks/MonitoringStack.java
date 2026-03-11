@@ -180,7 +180,12 @@ public class MonitoringStack extends Stack {
                 .build());
         grafanaRole.addToPolicy(PolicyStatement.Builder.create()
                 .actions(List.of(
+                        "kafka-cluster:CreateTopic",
+                        "kafka-cluster:DeleteTopic",
+                        "kafka-cluster:AlterTopic",
                         "kafka-cluster:DescribeTopic",
+                        "kafka-cluster:DescribeTopicDynamicConfiguration",
+                        "kafka-cluster:AlterTopicDynamicConfiguration",
                         "kafka-cluster:ReadData",
                         "kafka-cluster:WriteData"
                 ))

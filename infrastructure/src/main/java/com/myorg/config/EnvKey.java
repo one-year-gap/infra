@@ -43,7 +43,11 @@ public enum EnvKey {
      * MSK
      * =================================================================
      */
-    MSK_CLUSTER_NAME("holliverse-msk-serverless"),
+    MSK_CLUSTER_NAME("holliverse-msk"),
+    MSK_KAFKA_VERSION("3.8.x"),
+    MSK_BROKER_INSTANCE_TYPE("kafka.t3.small"),
+    MSK_BROKER_NODES("4"),
+    MSK_BROKER_VOLUME_GIB("10"),
 
     /*
      * =================================================================
