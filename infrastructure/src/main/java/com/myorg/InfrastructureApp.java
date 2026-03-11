@@ -151,6 +151,7 @@ public class InfrastructureApp {
                 networkStack.getDbSg(),
                 networkStack.getAdminApiSg(),
                 networkStack.getCustomerApiSg(),
+                networkStack.getKafkaBrokerSg(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -181,6 +182,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getDbSg(),
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
+                baseStacks.networkStack().getKafkaBrokerSg(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -332,6 +334,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getRecommendationRealtimeSg(),
+                baseStacks.networkStack().getAnalysisServerSg(),
                 baseStacks.ecrStack().getAdminWebRepo(),
                 baseStacks.ecrStack().getApiServerRepo(),
                 baseStacks.rdsStack().getRds(),

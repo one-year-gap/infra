@@ -38,12 +38,14 @@ public class EcsClusterStack extends Stack {
     private final Cluster cluster;
     private final LogGroup ecsLogGroup;
     private final ILogGroup recommendationRealtimeLogGroup;
+    private final ILogGroup analysisServerLogGroup;
     private final ISecret apiServerKafkaSecret;
     private final ISecret recommendationRealtimeRuntimeSecret;
 
     private final FargateApiService customerApiService;
     private final FargateApiService adminApiService;
     private final FargateBackgroundService recommendationRealtimeService;
+    private final FargateBackgroundService analysisServerService;
     private final FargateWebService adminWebService;
 
     /**
@@ -52,6 +54,7 @@ public class EcsClusterStack extends Stack {
     private static final String CLUSTER_ID = "HolliverseCluster";
     private static final String LOG_GROUP_ID = "EcsLogGroup";
     private static final String RECOMMENDATION_REALTIME_LOG_GROUP_ID = "RecommendationRealtimeLogGroup";
+    private static final String ANALYSIS_SERVER_LOG_GROUP_ID = "AnalysisServerLogGroup";
     private static final String API_SERVER_KAFKA_SECRET_ID = "ApiServerKafkaSecret";
     private static final String RECOMMENDATION_REALTIME_RUNTIME_SECRET_ID = "RecommendationRealtimeRuntimeSecret";
     private static final String RECOMMENDATION_REALTIME_REPOSITORY_ID = "RecommendationRealtimeRepo";
@@ -67,13 +70,15 @@ public class EcsClusterStack extends Stack {
 
     private static final String RECOMMENDATION_REALTIME_ID = "RecommendationRealtime";
     private static final String RECOMMENDATION_REALTIME_LOG_STREAM_PREFIX = "recommendation-realtime";
+    private static final String ANALYSIS_SERVER_ID = "AnalysisServer";
+    private static final String ANALYSIS_SERVER_LOG_STREAM_PREFIX = "analysis-server";
 
     /**
      * 서비스 상수
      */
     private static final int DESIRED_COUNT = 1;
-    private static final String PROFILE_ADMIN = "admin";
-    private static final String PROFILE_CUSTOMER = "customer";
+    private static final String SPRING_PROFILES_ADMIN = "admin,prod";
+    private static final String SPRING_PROFILES_CUSTOMER = "customer,prod";
     private static final String DOMAIN_NAME_SPACE = "ServiceNs";
     private static final String ADMIN_CLOUD_MAP_NAME = "admin-api";
     private static final String CUSTOMER_CLOUD_MAP_NAME = "customer-api";
@@ -94,6 +99,7 @@ public class EcsClusterStack extends Stack {
             SecurityGroup adminApiSg,
             SecurityGroup customerApiSg,
             SecurityGroup recommendationRealtimeSg,
+            SecurityGroup analysisServerSg,
 
             // EcrStack에서 내려오는 것
             Repository adminWebRepo,
@@ -143,6 +149,12 @@ public class EcsClusterStack extends Stack {
                 this,
                 RECOMMENDATION_REALTIME_LOG_GROUP_ID,
                 "/holliverse/ecs/recommendation-realtime"
+        );
+
+        this.analysisServerLogGroup = LogGroup.fromLogGroupName(
+                this,
+                ANALYSIS_SERVER_LOG_GROUP_ID,
+                "/holliverse/ecs/analysis-server"
         );
 
         /**
@@ -248,7 +260,7 @@ public class EcsClusterStack extends Stack {
                 privateSubnets,
                 DESIRED_COUNT,
                 true,
-                PROFILE_ADMIN,
+                SPRING_PROFILES_ADMIN,
                 dbUrl,
                 dbSecret,
                 adminApiEnvironment,
@@ -272,7 +284,7 @@ public class EcsClusterStack extends Stack {
                 privateSubnets,
                 DESIRED_COUNT,
                 true,
-                PROFILE_CUSTOMER,
+                SPRING_PROFILES_CUSTOMER,
                 dbUrl,
                 dbSecret,
                 customerApiEnvironment,
@@ -285,9 +297,15 @@ public class EcsClusterStack extends Stack {
 
         int recommendationRealtimePort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT));
         int recommendationRealtimeDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_DESIRED_COUNT));
+        int analysisServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_PORT));
+        int analysisServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT));
         Map<String, String> recommendationRealtimeEnvironment = buildRecommendationRealtimeEnvironment(
                 recommendationRealtimePort,
                 adminApiPort,
+                mskBootstrapBrokersSaslIam
+        );
+        Map<String, String> analysisServerEnvironment = buildAnalysisServerEnvironment(
+                analysisServerPort,
                 mskBootstrapBrokersSaslIam
         );
 
@@ -301,6 +319,7 @@ public class EcsClusterStack extends Stack {
                 recommendationRealtimeLogGroup,
                 RECOMMENDATION_REALTIME_LOG_STREAM_PREFIX,
                 privateSubnets,
+                null,
                 512,
                 1024,
                 recommendationRealtimeDesiredCount,
@@ -309,11 +328,35 @@ public class EcsClusterStack extends Stack {
                 List.of(),
                 recommendationRealtimePort,
                 recommendationRealtimeRuntimeSecret,
-                Map.of(
-                        "POSTGRES_DSN", "POSTGRES_DSN"
-                ),
+                buildRecommendationRuntimeSecretMapping(),
                 serviceNs,
                 AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_CLOUD_MAP_NAME),
+                List.of(),
+                mskTaskPolicies
+        );
+
+        FargateBackgroundServiceProps analysisServerServiceProps = new FargateBackgroundServiceProps(
+                this,
+                ANALYSIS_SERVER_ID,
+                cluster,
+                recommendationRealtimeRepo,
+                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG),
+                analysisServerSg,
+                analysisServerLogGroup,
+                ANALYSIS_SERVER_LOG_STREAM_PREFIX,
+                privateSubnets,
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_SERVICE_NAME),
+                512,
+                1024,
+                analysisServerDesiredCount,
+                true,
+                analysisServerEnvironment,
+                List.of(),
+                analysisServerPort,
+                recommendationRealtimeRuntimeSecret,
+                buildRecommendationRuntimeSecretMapping(),
+                serviceNs,
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_CLOUD_MAP_NAME),
                 List.of(),
                 mskTaskPolicies
         );
@@ -339,6 +382,7 @@ public class EcsClusterStack extends Stack {
          * EventBridge/StepFunctions가 1회성 Task를 실행하는 방향으로 분리한다.
          */
         this.recommendationRealtimeService = new FargateBackgroundService(recommendationRealtimeServiceProps);
+        this.analysisServerService = new FargateBackgroundService(analysisServerServiceProps);
     }
 
     public Cluster getCluster() {
@@ -351,6 +395,10 @@ public class EcsClusterStack extends Stack {
 
     public ILogGroup getRecommendationRealtimeLogGroup() {
         return recommendationRealtimeLogGroup;
+    }
+
+    public ILogGroup getAnalysisServerLogGroup() {
+        return analysisServerLogGroup;
     }
 
     public ISecret getApiServerKafkaSecret() {
@@ -377,8 +425,14 @@ public class EcsClusterStack extends Stack {
         return recommendationRealtimeService;
     }
 
+    public FargateBackgroundService getAnalysisServerService() {
+        return analysisServerService;
+    }
+
     private Map<String, String> buildAdminApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
+        env.put("DB_POOL_MAX", "10");
+        env.put("DB_POOL_MIN", "1");
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
         // api-server가 secret import 실패 시 localhost 기본값으로 떨어지지 않도록
         // Kafka 연결값은 컨테이너 env로도 직접 주입한다.
@@ -399,6 +453,8 @@ public class EcsClusterStack extends Stack {
 
     private Map<String, String> buildCustomerApiEnvironment(String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
+        env.put("DB_POOL_MAX", "10");
+        env.put("DB_POOL_MIN", "1");
         env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
         env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
         env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
@@ -419,28 +475,56 @@ public class EcsClusterStack extends Stack {
         env.put("DEBUG", "false");
         env.put("APP_PORT", String.valueOf(recommendationRealtimePort));
         env.put("PYTHONUNBUFFERED", "1");
-
-        env.put("KAFKA_CONSUMER_ENABLED", "true");
-        env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
-        env.put("KAFKA_ANALYSIS_REQUEST_TOPIC", "analysis.request.v1");
-        env.put("KAFKA_ANALYSIS_RESPONSE_TOPIC", "analysis.response.v1");
-        env.put("KAFKA_CONSUMER_GROUP_ID", "counseling-analytics-consumer");
-        env.put("KAFKA_AUTO_OFFSET_RESET", "earliest");
-        env.put("KAFKA_MAX_POLL_INTERVAL_MS", "1800000");
-        env.put("KAFKA_SESSION_TIMEOUT_MS", "60000");
-        env.put("KAFKA_HEARTBEAT_INTERVAL_MS", "15000");
-        env.put("KAFKA_BATCH_SIZE", "1000");
-        env.put("KAFKA_POLL_TIMEOUT_MS", "1000");
-        env.put("KAFKA_LOG_EACH_MESSAGE", "true");
-        env.put("KAFKA_LOG_RESULT_LIMIT", "20");
+        env.put("KAFKA_CONSUMER_ENABLED", "false");
 
         env.put("POSTGRES_POOL_MIN_SIZE", "1");
-        env.put("POSTGRES_POOL_MAX_SIZE", "10");
+        env.put("POSTGRES_POOL_MAX_SIZE", "2");
         env.put(
                 "ADMIN_API_BASE_URL",
                 "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
         );
         return env;
+    }
+
+    private Map<String, String> buildAnalysisServerEnvironment(
+            int analysisServerPort,
+            String mskBootstrapBrokersSaslIam
+    ) {
+        Map<String, String> env = new HashMap<>();
+        env.put("APP_MODE", "analysis-server");
+        env.put("APP_ENV", "prod");
+        env.put("DEBUG", "false");
+        env.put("APP_PORT", String.valueOf(analysisServerPort));
+        env.put("PYTHONUNBUFFERED", "1");
+
+        env.put("KAFKA_CONSUMER_ENABLED", "true");
+        env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
+        env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
+        env.put("KAFKA_ANALYSIS_REQUEST_TOPIC", "analysis.request.v1");
+        env.put("KAFKA_ANALYSIS_RESPONSE_TOPIC", "analysis.response.v1");
+        env.put("KAFKA_CONSUMER_GROUP_ID", "counseling-analytics-consumer");
+        env.put("KAFKA_AUTO_OFFSET_RESET", "earliest");
+        env.put("KAFKA_BATCH_SIZE", "1000");
+        env.put("KAFKA_POLL_TIMEOUT_MS", "1000");
+        env.put("KAFKA_LOG_EACH_MESSAGE", "true");
+        env.put("KAFKA_LOG_RESULT_LIMIT", "20");
+        env.put("KAFKA_RESPONSE_MAX_ATTEMPTS", "3");
+
+        env.put("POSTGRES_POOL_MIN_SIZE", "1");
+        env.put("POSTGRES_POOL_MAX_SIZE", "2");
+        return env;
+    }
+
+    private Map<String, String> buildRecommendationRuntimeSecretMapping() {
+        return Map.of(
+                "POSTGRES_HOST", "POSTGRES_HOST",
+                "POSTGRES_PORT", "POSTGRES_PORT",
+                "POSTGRES_DB", "POSTGRES_DB",
+                "POSTGRES_USER", "POSTGRES_USER",
+                "POSTGRES_PASSWORD", "POSTGRES_PASSWORD"
+        );
     }
 
     private List<String> resolveArns(String singleArnEnvKey, String csvArnEnvKey) {

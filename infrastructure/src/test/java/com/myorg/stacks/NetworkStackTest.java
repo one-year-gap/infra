@@ -15,6 +15,7 @@ class NetworkStackTest {
     private String customerAlbSgLogicalId;
     private String customerApiSgLogicalId;
     private String recommendationRealtimeSgLogicalId;
+    private String analysisServerSgLogicalId;
     private String kafkaBrokerSgLogicalId;
     private String adminAlbSgLogicalId;
     private String adminWebSgLogicalId;
@@ -22,6 +23,7 @@ class NetworkStackTest {
     private String dbSgLogicalId;
     private static final int MSK_IAM_PORT = 9098;
     private static final int RECOMMENDATION_REALTIME_PORT = 8000;
+    private static final int ANALYSIS_SERVER_PORT = 8000;
 
     private static final List<String> allowedIpsList = List.of(
             "203.0.113.10/32",
@@ -56,6 +58,8 @@ class NetworkStackTest {
                 "Customer API Server Security Group");
         recommendationRealtimeSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "Recommendation Realtime ECS Security Group");
+        analysisServerSgLogicalId = findSecurityGroupLogicalIdByDescription(
+                "Analysis Server ECS Security Group");
         kafkaBrokerSgLogicalId = findSecurityGroupLogicalIdByDescription(
                 "MSK Serverless Broker Security Group");
         adminAlbSgLogicalId = findSecurityGroupLogicalIdByDescription(
@@ -296,6 +300,29 @@ class NetworkStackTest {
     }
 
     @Nested
+    @DisplayName("Analysis Server Security Group")
+    class AnalysisServerSgTest {
+        @Test
+        @DisplayName("MSK IAM 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToKafkaBrokerOnly() {
+            assertEgressToSecurityGroup(analysisServerSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
+        }
+
+        @Test
+        @DisplayName("DB(5432) 아웃바운드를 DB SG로만 허용한다")
+        void shouldAllowDbOutboundToDbSecurityGroupOnly() {
+            assertEgressToSecurityGroup(analysisServerSgLogicalId, dbSgLogicalId, 5432);
+            assertNoEgressCidrOnPort(analysisServerSgLogicalId, "tcp", 5432);
+        }
+
+        @Test
+        @DisplayName("Admin API에서만 analysis-server 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromAdminApiOnly() {
+            assertIngressFromSecurityGroup(analysisServerSgLogicalId, adminApiSgLogicalId, ANALYSIS_SERVER_PORT);
+        }
+    }
+
+    @Nested
     @DisplayName("Kafka Broker Security Group")
     class KafkaBrokerSgTest {
         @Test
@@ -314,6 +341,12 @@ class NetworkStackTest {
         @DisplayName("Admin API에서 MSK IAM 포트 인바운드를 허용한다")
         void shouldAllowInboundFromAdminApi() {
             assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, adminApiSgLogicalId, MSK_IAM_PORT);
+        }
+
+        @Test
+        @DisplayName("Analysis Server에서 MSK IAM 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromAnalysisServer() {
+            assertIngressFromSecurityGroup(kafkaBrokerSgLogicalId, analysisServerSgLogicalId, MSK_IAM_PORT);
         }
     }
     @Nested
@@ -395,6 +428,12 @@ class NetworkStackTest {
         }
 
         @Test
+        @DisplayName("Analysis Server 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToAnalysisServer() {
+            assertEgressToSecurityGroup(adminApiSgLogicalId, analysisServerSgLogicalId, ANALYSIS_SERVER_PORT);
+        }
+
+        @Test
         @DisplayName("Recommendation Realtime에서 adminServerPort 인바운드를 허용한다")
         void shouldAllowInboundFromRecommendationRealtime() {
             assertIngressFromSecurityGroup(adminApiSgLogicalId, recommendationRealtimeSgLogicalId, ADMIN_SERVER_PORT);
@@ -416,11 +455,17 @@ class NetworkStackTest {
         void shouldAllowInboundFromAdminApiOnly() {
             assertIngressFromSecurityGroup(dbSgLogicalId, adminApiSgLogicalId, 5432);
         }
+
+        @Test
+        @DisplayName("Analysis Server에서만 DB 5432 인바운드를 허용한다")
+        void shouldAllowInboundFromAnalysisServerOnly() {
+            assertIngressFromSecurityGroup(dbSgLogicalId, analysisServerSgLogicalId, 5432);
+        }
     }
 
-    @DisplayName("Security Group은 8개 생성된다 - CustomerAlbSg, CustomerApiSg, RecommendationRealtimeSg, KafkaBrokerSg, AdminAlbSg, AdminWebSg, AdminApiSg, DbSg")
+    @DisplayName("Security Group은 9개 생성된다 - CustomerAlbSg, CustomerApiSg, RecommendationRealtimeSg, AnalysisServerSg, KafkaBrokerSg, AdminAlbSg, AdminWebSg, AdminApiSg, DbSg")
     @Test
-    void should_create_eight_security_groups(){
-        template.resourceCountIs("AWS::EC2::SecurityGroup",8);
+    void should_create_nine_security_groups(){
+        template.resourceCountIs("AWS::EC2::SecurityGroup",9);
     }
 }

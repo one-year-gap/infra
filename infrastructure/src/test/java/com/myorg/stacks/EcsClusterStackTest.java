@@ -43,6 +43,9 @@ class EcsClusterStackTest {
         SecurityGroup recommendationRealtimeSg = SecurityGroup.Builder.create(fixtureStack, "TestRecommendationRealtimeSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup analysisServerSg = SecurityGroup.Builder.create(fixtureStack, "TestAnalysisServerSg")
+                .vpc(vpc)
+                .build();
 
         Repository adminWebRepo = Repository.Builder.create(fixtureStack, "TestAdminWebRepo")
                 .repositoryName("test-admin-web")
@@ -86,6 +89,7 @@ class EcsClusterStackTest {
                 adminApiSg,
                 customerApiSg,
                 recommendationRealtimeSg,
+                analysisServerSg,
                 adminWebRepo,
                 apiServerRepo,
                 rds,
@@ -113,13 +117,13 @@ class EcsClusterStackTest {
         //then
         assertEquals(1, clusters.size());
         assertEquals(1, logGroups.size());
-        assertEquals(4, taskDefinitions.size());
-        assertEquals(4, services.size());
+        assertEquals(5, taskDefinitions.size());
+        assertEquals(5, services.size());
         assertEquals(1, namespaces.size());
-        assertEquals(3, sdServices.size());
+        assertEquals(4, sdServices.size());
         assertEquals(0, secrets.size());
 
-        assertEquals(3, countServicesByExecOption(services, true));
+        assertEquals(4, countServicesByExecOption(services, true));
         assertEquals(1, countServicesByExecOption(services, false));
 
         template.hasResourceProperties("AWS::Logs::LogGroup", Map.of(
@@ -139,6 +143,9 @@ class EcsClusterStackTest {
         ));
         template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
                 "Name", "recommendation-realtime"
+        ));
+        template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
+                "Name", "analysis-server"
         ));
     }
 

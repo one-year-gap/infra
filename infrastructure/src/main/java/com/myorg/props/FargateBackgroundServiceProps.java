@@ -28,6 +28,7 @@ public record FargateBackgroundServiceProps(
         ILogGroup logGroup,
         String logStreamPrefix,
         SubnetSelection subnets,
+        String serviceName,
 
         int cpu,
         int memoryLimitMiB,

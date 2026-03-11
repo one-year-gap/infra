@@ -9,6 +9,13 @@ import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Duration;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
+import software.amazon.awscdk.services.ec2.ISecurityGroup;
+import software.amazon.awscdk.services.ec2.ISubnet;
+import software.amazon.awscdk.services.ec2.IVpc;
+import software.amazon.awscdk.services.ec2.SecurityGroup;
+import software.amazon.awscdk.services.ec2.Subnet;
+import software.amazon.awscdk.services.ec2.Vpc;
+import software.amazon.awscdk.services.ec2.VpcLookupOptions;
 import software.amazon.awscdk.services.dynamodb.ITable;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awscdk.services.dynamodb.TableAttributes;
@@ -24,13 +31,17 @@ import software.amazon.awscdk.services.stepfunctions.StateMachine;
 import software.amazon.awscdk.services.stepfunctions.StateMachineProps;
 import software.constructs.Construct;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 스케줄 기반 analysis batch 워크플로우 스택.
  *
  * 1) EventBridge가 StateMachine을 시작
  * 2) StateMachine이 DynamoDB 락을 선점
- * 3) ECS RunTask(APP_MODE=batch) 1회 실행
- * 4) 종료 확인/검증 후 락 해제
+ * 3) analysis-server readiness 확인
+ * 4) ECS RunTask(APP_MODE=batch) 1회 실행
+ * 5) 종료 확인/검증 후 락 해제
  */
 public class OnDemandWorkflowStack extends Stack {
     /**
@@ -70,6 +81,16 @@ public class OnDemandWorkflowStack extends Stack {
 
     private void initialize(OnDemandWorkflowResources resources, OnDemandWorkflowConfig config) {
         this.lockTable = importLockTable();
+        IVpc workflowVpc = importWorkflowVpc(config);
+
+        Function analysisServerProbeFunction = OnDemandSupportFunctionFactory.createAnalysisServerProbe(
+                this,
+                "AnalysisServerProbeFunction",
+                config.analysisServerReadinessConfig(),
+                workflowVpc,
+                importSubnets(config.analysisServerReadinessConfig().probeSubnetIds()),
+                importSecurityGroups(config.analysisServerReadinessConfig().probeSecurityGroupIds())
+        );
 
         // 검증 로직은 배치 종료 후 선택적으로만 사용한다.
         Function businessValidatorFunction = null;
@@ -90,6 +111,7 @@ public class OnDemandWorkflowStack extends Stack {
                 this,
                 resources,
                 config,
+                analysisServerProbeFunction,
                 businessValidatorFunction,
                 lockTable.getTableName(),
                 lockTable.getTableArn()
@@ -183,5 +205,31 @@ public class OnDemandWorkflowStack extends Stack {
         }
 
         return Table.fromTableName(this, "ImportedOnDemandWorkflowLockTable", lockTableName);
+    }
+
+    private IVpc importWorkflowVpc(OnDemandWorkflowConfig config) {
+        return Vpc.fromLookup(this, "ImportedOnDemandWorkflowVpc", VpcLookupOptions.builder()
+                .vpcId(config.analysisServerReadinessConfig().probeVpcId())
+                .build());
+    }
+
+    private List<ISubnet> importSubnets(List<String> subnetIds) {
+        List<ISubnet> subnets = new ArrayList<>();
+        for (int i = 0; i < subnetIds.size(); i++) {
+            subnets.add(Subnet.fromSubnetId(this, "ImportedAnalysisServerProbeSubnet" + i, subnetIds.get(i)));
+        }
+        return subnets;
+    }
+
+    private List<ISecurityGroup> importSecurityGroups(List<String> securityGroupIds) {
+        List<ISecurityGroup> securityGroups = new ArrayList<>();
+        for (int i = 0; i < securityGroupIds.size(); i++) {
+            securityGroups.add(SecurityGroup.fromSecurityGroupId(
+                    this,
+                    "ImportedAnalysisServerProbeSecurityGroup" + i,
+                    securityGroupIds.get(i)
+            ));
+        }
+        return securityGroups;
     }
 }

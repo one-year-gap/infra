@@ -62,6 +62,7 @@ public class RdsStack extends Stack {
                 .vpc(vpc)
                 .vpcSubnets(dbSubnets)
                 .securityGroups(List.of(dbSg))
+                .iamAuthentication(true)
                 .credentials(Credentials.fromSecret(dbSecret))
                 .databaseName(DB_NAME)
                 .port(DB_PORT)

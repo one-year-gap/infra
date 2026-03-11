@@ -43,20 +43,23 @@ public class OnDemandWorkflowDefinitionBuilder {
     /**
      * 워크플로우 상태 전이:
      * 1) lock 획득
-     * 2) Spring Batch task 실행
-     * 3) task 종료/exit code 확인
-     * 4) 선택적 business validation
-     * 5) lock 해제
+     * 2) analysis-server /ready, /health 확인
+     * 3) Spring Batch task 실행
+     * 4) task 종료/exit code 확인
+     * 5) 선택적 business validation
+     * 6) lock 해제
      */
     public Chain build(
             Construct scope,
             OnDemandWorkflowResources resources,
             OnDemandWorkflowConfig config,
+            IFunction analysisServerProbeFunction,
             IFunction businessValidatorFunction,
             String lockTableName,
             String lockTableArn
     ) {
         String workerTaskDefinitionIdentifier = resources.workerConfig().workerTaskDefinitionIdentifier();
+        var readinessConfig = config.analysisServerReadinessConfig();
 
         Pass markFailureFromCatch = new Pass(scope, "MarkFailureFromCatch", PassProps.builder()
                 .parameters(Map.of(
@@ -71,6 +74,10 @@ public class OnDemandWorkflowDefinitionBuilder {
         Pass markRunTaskFailure = marker(scope, "MarkRunTaskFailure", "BATCH_RUN_TASK_FAILED");
         Pass markWorkerTimeout = marker(scope, "MarkWorkerTimeout", "BATCH_TASK_TIMEOUT");
         Pass markBatchFailure = marker(scope, "MarkBatchFailure", "BATCH_EXIT_CODE_NON_ZERO");
+        Pass markAnalysisServerScaleUpFailure = marker(scope, "MarkAnalysisServerScaleUpFailure", "ANALYSIS_SERVER_SCALE_UP_FAILED");
+        Pass markAnalysisServerReadyFailure = marker(scope, "MarkAnalysisServerReadyFailure", "ANALYSIS_SERVER_READY_FAILED");
+        Pass markAnalysisServerHealthFailure = marker(scope, "MarkAnalysisServerHealthFailure", "ANALYSIS_SERVER_HEALTH_FAILED");
+        Pass markAnalysisServerScaleDownFailure = marker(scope, "MarkAnalysisServerScaleDownFailure", "ANALYSIS_SERVER_SCALE_DOWN_FAILED");
         Pass markBusinessValidationFailure = businessValidatorFunction == null
                 ? null
                 : marker(scope, "MarkBusinessValidationFailure", "BUSINESS_VALIDATION_FAILED");
@@ -116,6 +123,53 @@ public class OnDemandWorkflowDefinitionBuilder {
                         "businessValidationEnabled", config.enableBusinessValidation() && businessValidatorFunction != null
                 )))
                 .resultPath("$.config")
+                .build());
+
+        CallAwsService scaleUpAnalysisServer = new CallAwsService(scope, "ScaleUpAnalysisServer", CallAwsServiceProps.builder()
+                .service("ecs")
+                .action("updateService")
+                .iamResources(List.of("*"))
+                .parameters(Map.of(
+                        "Cluster", resources.clusterArn(),
+                        "Service", readinessConfig.serviceName(),
+                        "DesiredCount", readinessConfig.scaleUpDesiredCount()
+                ))
+                .resultPath("$.analysisServerScaleUpResult")
+                .build());
+        scaleUpAnalysisServer.addRetry(ecsRetry());
+        scaleUpAnalysisServer.addCatch(markAnalysisServerScaleUpFailure, CatchProps.builder()
+                .resultPath("$.error")
+                .build());
+
+        LambdaInvoke probeAnalysisServerReady = new LambdaInvoke(scope, "ProbeAnalysisServerReady", LambdaInvokeProps.builder()
+                .lambdaFunction(analysisServerProbeFunction)
+                .payload(TaskInput.fromObject(Map.of(
+                        "url", readinessConfig.readyUrl(),
+                        "timeoutSec", readinessConfig.probeTimeoutSeconds(),
+                        "expectedReleaseTag", config.expectedReleaseTag(),
+                        "requiredChecks", readinessConfig.requiredReadyChecks()
+                )))
+                .payloadResponseOnly(true)
+                .resultPath("$.analysisServer.ready")
+                .build());
+        probeAnalysisServerReady.addRetry(readinessRetry(readinessConfig.probeIntervalSeconds(), readinessConfig.probeMaxAttempts()));
+        probeAnalysisServerReady.addCatch(markAnalysisServerReadyFailure, CatchProps.builder()
+                .resultPath("$.error")
+                .build());
+
+        LambdaInvoke probeAnalysisServerHealth = new LambdaInvoke(scope, "ProbeAnalysisServerHealth", LambdaInvokeProps.builder()
+                .lambdaFunction(analysisServerProbeFunction)
+                .payload(TaskInput.fromObject(Map.of(
+                        "url", readinessConfig.healthUrl(),
+                        "timeoutSec", readinessConfig.probeTimeoutSeconds(),
+                        "requiredChecks", List.of()
+                )))
+                .payloadResponseOnly(true)
+                .resultPath("$.analysisServer.health")
+                .build());
+        probeAnalysisServerHealth.addRetry(readinessRetry(readinessConfig.probeIntervalSeconds(), readinessConfig.probeMaxAttempts()));
+        probeAnalysisServerHealth.addCatch(markAnalysisServerHealthFailure, CatchProps.builder()
+                .resultPath("$.error")
                 .build());
 
         // Spring Batch는 ECS service를 올리지 않고 one-off RunTask만 실행한다.
@@ -216,6 +270,22 @@ public class OnDemandWorkflowDefinitionBuilder {
             businessValidation.addCatch(markFailureFromCatch, CatchProps.builder().resultPath("$.error").build());
         }
 
+        CallAwsService scaleDownAnalysisServer = new CallAwsService(scope, "ScaleDownAnalysisServer", CallAwsServiceProps.builder()
+                .service("ecs")
+                .action("updateService")
+                .iamResources(List.of("*"))
+                .parameters(Map.of(
+                        "Cluster", resources.clusterArn(),
+                        "Service", readinessConfig.serviceName(),
+                        "DesiredCount", readinessConfig.scaleDownDesiredCount()
+                ))
+                .resultPath("$.analysisServerScaleDownResult")
+                .build());
+        scaleDownAnalysisServer.addRetry(ecsRetry());
+        scaleDownAnalysisServer.addCatch(markAnalysisServerScaleDownFailure, CatchProps.builder()
+                .resultPath("$.error")
+                .build());
+
         CallAwsService releaseExecutionLock = new CallAwsService(scope, "ReleaseExecutionLock", CallAwsServiceProps.builder()
                 .service("dynamodb")
                 .action("deleteItem")
@@ -248,7 +318,10 @@ public class OnDemandWorkflowDefinitionBuilder {
                 .build());
 
         acquireExecutionLock.next(setRuntimeFlags);
-        setRuntimeFlags.next(runBatchTask);
+        setRuntimeFlags.next(scaleUpAnalysisServer);
+        scaleUpAnalysisServer.next(probeAnalysisServerReady);
+        probeAnalysisServerReady.next(probeAnalysisServerHealth);
+        probeAnalysisServerHealth.next(runBatchTask);
 
         runBatchTask.next(checkRunTaskFailures);
         checkRunTaskFailures
@@ -289,15 +362,20 @@ public class OnDemandWorkflowDefinitionBuilder {
                     .otherwise(markBusinessValidationFailure);
         }
 
-        markSuccess.next(releaseExecutionLock);
-        markRunTaskFailure.next(releaseExecutionLock);
-        markWorkerTimeout.next(releaseExecutionLock);
-        markBatchFailure.next(releaseExecutionLock);
+        markSuccess.next(scaleDownAnalysisServer);
+        markAnalysisServerScaleUpFailure.next(scaleDownAnalysisServer);
+        markAnalysisServerReadyFailure.next(scaleDownAnalysisServer);
+        markAnalysisServerHealthFailure.next(scaleDownAnalysisServer);
+        markRunTaskFailure.next(scaleDownAnalysisServer);
+        markWorkerTimeout.next(scaleDownAnalysisServer);
+        markBatchFailure.next(scaleDownAnalysisServer);
         if (markBusinessValidationFailure != null) {
-            markBusinessValidationFailure.next(releaseExecutionLock);
+            markBusinessValidationFailure.next(scaleDownAnalysisServer);
         }
-        markFailureFromCatch.next(releaseExecutionLock);
+        markFailureFromCatch.next(scaleDownAnalysisServer);
 
+        scaleDownAnalysisServer.next(releaseExecutionLock);
+        markAnalysisServerScaleDownFailure.next(releaseExecutionLock);
         releaseExecutionLock.next(finalizeWorkflow);
         finalizeWorkflow
                 .when(Condition.stringEquals("$.workflow.status", "SUCCEEDED"), workflowSucceeded)
@@ -312,6 +390,15 @@ public class OnDemandWorkflowDefinitionBuilder {
                 .interval(Duration.seconds(3))
                 .maxAttempts(3)
                 .backoffRate(2.0)
+                .build();
+    }
+
+    private static RetryProps readinessRetry(int intervalSeconds, int maxAttempts) {
+        return RetryProps.builder()
+                .errors(List.of("States.ALL"))
+                .interval(Duration.seconds(intervalSeconds))
+                .maxAttempts(maxAttempts)
+                .backoffRate(1.0)
                 .build();
     }
 
@@ -425,6 +512,8 @@ public class OnDemandWorkflowDefinitionBuilder {
         // Spring Batch 실행에 필요한 설정은 env override만 사용한다.
         env.add(Map.of("Name", "SPRING_PROFILES_ACTIVE", "Value", workerConfig.workerSpringProfile()));
         env.add(Map.of("Name", "SPRING_BATCH_JOB_NAME", "Value", workerConfig.workerBatchJobName()));
+        env.add(Map.of("Name", "DB_POOL_MAX", "Value", "5"));
+        env.add(Map.of("Name", "DB_POOL_MIN", "Value", "1"));
 
         // worker는 application.kafka.yml에서 MSK_BOOTSTRAP_SERVERS만 읽고 보안 설정은 코드/설정 파일에 이미 고정돼 있다.
         env.add(Map.of("Name", "MSK_BOOTSTRAP_SERVERS", "Value", workerConfig.workerMskBootstrapServers()));

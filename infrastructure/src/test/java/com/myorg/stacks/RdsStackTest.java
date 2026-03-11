@@ -61,7 +61,8 @@ class RdsStackTest {
 
         template.hasResourceProperties("AWS::RDS::DBInstance", Map.of(
                 "Engine", "postgres",
-                "DBName", "holliverse"
+                "DBName", "holliverse",
+                "EnableIAMDatabaseAuthentication", true
         ));
         template.hasResourceProperties("AWS::SecretsManager::Secret", Map.of(
                 "Name", "holliverse/rds/postgres"
