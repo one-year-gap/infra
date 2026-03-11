@@ -21,6 +21,7 @@ public record OnDemandWorkflowConfig(
 
         boolean enableBusinessValidation,
 
+        AnalysisServerReadinessConfig analysisServerReadinessConfig,
         LambdaConfig lambdaConfig,
         DynamoDBConfig dynamoDBConfig,
         WorkerConfig workerConfig
@@ -43,7 +44,7 @@ public record OnDemandWorkflowConfig(
                 AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_REQUIRED_RESULT_FILES.key(), ""),
                 Boolean.parseBoolean(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ENABLE_BUSINESS_VALIDATION.key(), "false")),
 
-                // 검증/락/배치 실행에 필요한 지원 설정
+                AnalysisServerReadinessConfig.fromEnv(),
                 LambdaConfig.fromEnv(),
                 DynamoDBConfig.fromEnv(),
                 WorkerConfig.fromEnv()
