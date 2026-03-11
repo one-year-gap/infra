@@ -18,6 +18,9 @@ public class NetworkStack extends Stack {
     private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg;
     private static final int MSK_IAM_PORT = 9098;
 
+    /**
+     * VPC와 서비스 보안 그룹 구성.
+     */
     public NetworkStack(Construct scope, String id, StackProps props, NetworkStackConfig config) {
         super(scope, id, props);
 

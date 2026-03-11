@@ -22,10 +22,13 @@ public class RdsStack extends Stack {
     private static final String DB_NAME = "holliverse";
     private static final int DB_PORT = 5432;
 
+    /**
+     * private subnet PostgreSQL 인스턴스 구성.
+     */
     public RdsStack(Construct scope, String id, StackProps props, Vpc vpc, SecurityGroup dbSg) {
         super(scope, id, props);
 
-        //Database SecretManager
+        // DB 시크릿 생성
         this.dbSecret = Secret.Builder.create(this, "HolliverseDbSecret")
                 .secretName("holliverse/rds/postgres")
                 .generateSecretString(SecretStringGenerator.builder()
@@ -38,16 +41,19 @@ public class RdsStack extends Stack {
 
         this.dbSg = dbSg;
 
+        // DB subnet 선택
         SubnetSelection dbSubnets = SubnetSelection.builder()
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
                 .build();
 
+        // PostgreSQL 엔진 선택
         IInstanceEngine postgresEngine = DatabaseInstanceEngine.postgres(
                 PostgresInstanceEngineProps.builder()
                         .version(PostgresEngineVersion.VER_16)
                         .build()
         );
 
+        // 파라미터 그룹 구성
         ParameterGroup postgresParameterGroup = ParameterGroup.Builder.create(this, "HolliversePostgresParameterGroup")
                 .engine(postgresEngine)
                 .description("PostgreSQL settings for slow query analysis with pg_stat_statements")
@@ -57,6 +63,7 @@ public class RdsStack extends Stack {
                 ))
                 .build();
 
+        // RDS 인스턴스 생성
         this.rds = DatabaseInstance.Builder.create(this, "HolliversePostgres")
                 .engine(postgresEngine)
                 .vpc(vpc)
