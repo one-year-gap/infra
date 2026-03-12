@@ -1,0 +1,253 @@
+# log-server 전용 deploy (no-tagging)
+name: central-log-server-main-deploy
+
+on:
+  repository_dispatch:
+    types: [log-server-main-deploy-request]
+
+  workflow_dispatch:
+    inputs:
+      source-sha:
+        description: "target sha (empty = HEAD of default branch)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: central-log-server-main-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+  LOG_SERVER_SOURCE_REPO: one-year-gap/log-server
+  LOG_SERVER_ECR_REPOSITORY: one-year-gap/log-server
+  LOG_SERVER_ECS_CLUSTER: ${{ vars.LOG_SERVER_ECS_CLUSTER_ARN }}
+  LOG_SERVER_ECS_SERVICE_NAME: ${{ vars.LOG_SERVER_ECS_SERVICE_NAME }}
+  LOG_SERVER_ECS_CONTAINER_NAME: ${{ vars.LOG_SERVER_ECS_CONTAINER_NAME }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source context
+        id: resolve
+        uses: actions/github-script@v7
+        env:
+          INPUT_SOURCE_SHA: ${{ inputs.source-sha }}
+          DISPATCH_SOURCE_SHA: ${{ github.event.client_payload.source_sha }}
+          DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          SOURCE_REPO: ${{ env.LOG_SERVER_SOURCE_REPO }}
+        with:
+          github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          script: |
+            const sourceRepo = String(process.env.SOURCE_REPO || "").trim();
+            const dispatchSourceRepo = String(process.env.DISPATCH_SOURCE_REPO || "").trim();
+            const sourceSha = String(
+              process.env.INPUT_SOURCE_SHA ||
+              process.env.DISPATCH_SOURCE_SHA ||
+              ""
+            ).trim();
+
+            if (!sourceRepo || !sourceRepo.includes("/")) {
+              throw new Error(`invalid source repo: ${sourceRepo}`);
+            }
+
+            if (dispatchSourceRepo && dispatchSourceRepo !== sourceRepo) {
+              throw new Error(`unexpected source repo: ${dispatchSourceRepo}`);
+            }
+
+            const [owner, repo] = sourceRepo.split("/");
+            if (sourceSha) {
+              await github.rest.repos.getCommit({
+                owner,
+                repo,
+                ref: sourceSha
+              });
+            }
+
+            core.setOutput("source_repo", sourceRepo);
+            core.setOutput("source_sha", sourceSha);
+
+      - name: Checkout log-server (exact sha)
+        if: steps.resolve.outputs.source_sha != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve.outputs.source_repo }}
+          ref: ${{ steps.resolve.outputs.source_sha }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout log-server (default branch)
+        if: steps.resolve.outputs.source_sha == ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.resolve.outputs.source_repo }}
+          token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          fetch-depth: 0
+
+      - name: Resolve commit metadata
+        id: git-meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          full_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+
+          echo "full_sha=${full_sha}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate application
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push log-server image
+        id: image
+        shell: bash
+        env:
+          SHORT_SHA: ${{ steps.git-meta.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+
+          repository="${LOG_SERVER_ECR_REPOSITORY:-one-year-gap/log-server}"
+          image_tag="sha-${SHORT_SHA}"
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE_URI="${REGISTRY}/${repository}:${image_tag}"
+          LATEST_IMAGE_URI="${REGISTRY}/${repository}:latest"
+
+          if ! aws ecr describe-repositories --repository-names "${repository}" >/dev/null 2>&1; then
+            echo "Create ECR repository: ${repository}"
+            aws ecr create-repository --repository-name "${repository}" >/dev/null
+          fi
+
+          docker build --platform linux/amd64 \
+            -t "${IMAGE_URI}" \
+            -t "${LATEST_IMAGE_URI}" \
+            .
+
+          docker push "${IMAGE_URI}"
+          docker push "${LATEST_IMAGE_URI}"
+
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "latest_image_uri=${LATEST_IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Register task definition revision and update ECS service
+        id: deploy
+        shell: bash
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          normalize_aws_text_scalar() {
+            printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
+          }
+
+          cluster="${LOG_SERVER_ECS_CLUSTER:-arn:aws:ecs:ap-northeast-2:062822872449:cluster/EcsClusterStack-HolliverseClusterB5A6CAFA-nz1HNv46hoea}"
+          service_name="${LOG_SERVER_ECS_SERVICE_NAME:-log-server}"
+          container_name="${LOG_SERVER_ECS_CONTAINER_NAME:-MainContainer}"
+
+          source_taskdef="$(aws ecs describe-services \
+            --region "$AWS_REGION" \
+            --cluster "$cluster" \
+            --services "$service_name" \
+            --query 'services[0].taskDefinition' \
+            --output text)"
+          source_taskdef="$(normalize_aws_text_scalar "$source_taskdef")"
+
+          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
+            echo "::error::Could not resolve current task definition. cluster=${cluster} service=${service_name}"
+            exit 1
+          fi
+
+          taskdef_json="$(aws ecs describe-task-definition \
+            --region "$AWS_REGION" \
+            --task-definition "$source_taskdef" \
+            --query 'taskDefinition' \
+            --output json)"
+
+          new_taskdef_json="$(echo "$taskdef_json" | jq \
+            --arg img "$IMAGE_URI" \
+            --arg cname "$container_name" \
+            '
+            .containerDefinitions |= (
+              if any(.[]; .name == $cname)
+              then map(if .name == $cname then .image = $img else . end)
+              else (.[0].image = $img | .)
+              end
+            )
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
+            ')"
+
+          new_taskdef_arn="$(aws ecs register-task-definition \
+            --region "$AWS_REGION" \
+            --cli-input-json "$new_taskdef_json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
+          new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
+
+          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+            echo "::error::Failed to register new task definition revision"
+            exit 1
+          fi
+
+          aws ecs update-service \
+            --region "$AWS_REGION" \
+            --cluster "$cluster" \
+            --service "$service_name" \
+            --task-definition "$new_taskdef_arn" \
+            --force-new-deployment >/dev/null
+
+          aws ecs wait services-stable \
+            --region "$AWS_REGION" \
+            --cluster "$cluster" \
+            --services "$service_name"
+
+          {
+            echo "cluster=${cluster}"
+            echo "service_name=${service_name}"
+            echo "task_definition=${new_taskdef_arn}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          echo "source_repo=${{ steps.resolve.outputs.source_repo }}"
+          echo "source_sha=${{ steps.git-meta.outputs.full_sha }}"
+          echo "image_tag=${{ steps.image.outputs.image_tag }}"
+          echo "image_uri=${{ steps.image.outputs.image_uri }}"
+          echo "service=${{ steps.deploy.outputs.service_name }}"
+          echo "task_definition=${{ steps.deploy.outputs.task_definition }}"

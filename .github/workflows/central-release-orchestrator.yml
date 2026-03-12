@@ -636,7 +636,9 @@ jobs:
           DEPLOY_COUNSELING_BATCH: ${{ needs.resolve-context.outputs.deploy_counseling_batch }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
+          retries: 3
           script: |
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
             const sourceRepoSelector = String(
               process.env.SOURCE_REPO_CODE ||
               process.env.SOURCE_REPO_KEY ||
@@ -687,20 +689,48 @@ jobs:
               `deploy-labels: ${deployLabels.join(", ") || "none"}`
             ].join("\n");
 
-            const created = await github.rest.repos.createRelease({
+            const createReleasePayload = {
               owner,
               repo,
               tag_name:         tag,
               target_commitish: targetSha,
-              
               name:             `${tag}`,
               body:             header,
               draft:            false,
               prerelease:       false,
               generate_release_notes: true
-            });
+            };
 
-        
+            let created = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                created = await github.rest.repos.createRelease(createReleasePayload);
+                break;
+              } catch (e) {
+                const message = String(e.message || "");
+                const shouldRetry =
+                  (typeof e.status === "number" && e.status >= 500) ||
+                  /fetch failed|ECONNRESET|socket hang up|timed out/i.test(message);
+
+                try {
+                  const existingAfterFailure = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+                  core.notice(`Release became available after createRelease error: ${existingAfterFailure.data.html_url}`);
+                  return;
+                } catch (lookupError) {
+                  if (lookupError.status !== 404) {
+                    core.warning(`getReleaseByTag after failure also failed: ${lookupError.message}`);
+                  }
+                }
+
+                if (!shouldRetry || attempt === 3) {
+                  throw e;
+                }
+
+                core.warning(`createRelease attempt ${attempt} failed: ${message}. Retrying...`);
+                await sleep(attempt * 2000);
+              }
+            }
+
             core.info(`Created release: ${created.data.html_url}`);
 
   build-and-push-api-server:
@@ -1706,6 +1736,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          normalize_aws_text_scalar() {
+            printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
+          }
+
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
             echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
             exit 1
@@ -1731,6 +1765,7 @@ jobs:
             fi
             source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
           fi
+          source_taskdef="$(normalize_aws_text_scalar "$source_taskdef")"
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
             echo "::error::Could not resolve task definition for counseling analytics"
@@ -1760,6 +1795,7 @@ jobs:
             ' )"
 
           new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+          new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
             echo "::error::Failed to register task definition revision"
@@ -1815,6 +1851,10 @@ jobs:
         run: |
           set -euo pipefail
 
+          normalize_aws_text_scalar() {
+            printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
+          }
+
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
             echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
             exit 1
@@ -1834,6 +1874,7 @@ jobs:
               --query 'taskDefinitionArns[0]' \
               --output text 2>/dev/null || true)"
           fi
+          source_taskdef="$(normalize_aws_text_scalar "$source_taskdef")"
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
             echo "::error::Could not resolve task definition for analysis batch"
@@ -1877,6 +1918,7 @@ jobs:
             --cli-input-json "$new_taskdef_json" \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)"
+          new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
             echo "::error::Failed to register analysis batch task definition revision"
