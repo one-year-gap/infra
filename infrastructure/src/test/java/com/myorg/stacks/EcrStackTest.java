@@ -16,8 +16,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class EcrStackTest {
 
     @Test
-    @DisplayName("ECR Repository는 2개 생성되어야 한다.")
-    void should_create_ecr_repository_must_two() {
+    @DisplayName("ECR Repository는 3개 생성되어야 한다.")
+    void should_create_ecr_repository_must_three() {
         //given
         App app = new App();
         EcrStack ecrStack = new EcrStack(app, "EcrStackTest", StackProps.builder().build());
@@ -27,11 +27,12 @@ class EcrStackTest {
         Map<String, Map<String, Object>> repos = template.findResources("AWS::ECR::Repository");
 
         //then
-        //repo 2개 생성 검증
-        assertEquals(2, repos.size());
-        //api-server-test / admin-fe-test Repo가 존재하는지
+        // repo 개수
+        assertEquals(3, repos.size());
+        // 레포 이름
         assertTrue(hasRepoName(repos, RepositoryConfig.getApiServerRepository()));
         assertTrue(hasRepoName(repos, RepositoryConfig.getAdminWebRepository()));
+        assertTrue(hasRepoName(repos, RepositoryConfig.getLogServerRepository()));
         //Retain(DeletionPolicy/UpdateReplacePolicy) 검증
         assertAllRetain(repos);
 

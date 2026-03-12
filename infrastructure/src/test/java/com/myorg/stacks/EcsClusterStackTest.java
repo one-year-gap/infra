@@ -46,12 +46,18 @@ class EcsClusterStackTest {
         SecurityGroup analysisServerSg = SecurityGroup.Builder.create(fixtureStack, "TestAnalysisServerSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup logServerSg = SecurityGroup.Builder.create(fixtureStack, "TestLogServerSg")
+                .vpc(vpc)
+                .build();
 
         Repository adminWebRepo = Repository.Builder.create(fixtureStack, "TestAdminWebRepo")
                 .repositoryName("test-admin-web")
                 .build();
         Repository apiServerRepo = Repository.Builder.create(fixtureStack, "TestApiServerRepo")
                 .repositoryName("test-api-server")
+                .build();
+        Repository logServerRepo = Repository.Builder.create(fixtureStack, "TestLogServerRepo")
+                .repositoryName("test-log-server")
                 .build();
 
         Secret dbSecret = Secret.Builder.create(fixtureStack, "TestDbSecret")
@@ -90,8 +96,10 @@ class EcsClusterStackTest {
                 customerApiSg,
                 recommendationRealtimeSg,
                 analysisServerSg,
+                logServerSg,
                 adminWebRepo,
                 apiServerRepo,
+                logServerRepo,
                 rds,
                 dbSecret,
                 "holliverse-msk",
@@ -118,13 +126,13 @@ class EcsClusterStackTest {
         //then
         assertEquals(1, clusters.size());
         assertEquals(1, logGroups.size());
-        assertEquals(5, taskDefinitions.size());
-        assertEquals(5, services.size());
+        assertEquals(6, taskDefinitions.size());
+        assertEquals(6, services.size());
         assertEquals(1, namespaces.size());
         assertEquals(4, sdServices.size());
         assertEquals(0, secrets.size());
 
-        assertEquals(4, countServicesByExecOption(services, true));
+        assertEquals(5, countServicesByExecOption(services, true));
         assertEquals(1, countServicesByExecOption(services, false));
 
         template.hasResourceProperties("AWS::Logs::LogGroup", Map.of(
@@ -148,13 +156,19 @@ class EcsClusterStackTest {
         template.hasResourceProperties("AWS::ServiceDiscovery::Service", Map.of(
                 "Name", "analysis-server"
         ));
+        template.hasResourceProperties("AWS::ECS::Service", Map.of(
+                "ServiceName", "log-server"
+        ));
 
         String templateJson = template.toJSON().toString();
         org.assertj.core.api.Assertions.assertThat(templateJson)
                 .contains("KAFKA_CLICK_LOG_TOPIC")
                 .contains("client-event-logs")
-                .contains("KAFKA_CLICK_LOG_CONSUMER_GROUP_ID")
-                .contains("click-log-consumer");
+                .contains("KAFKA_GROUP_SPEED")
+                .contains("click-log-consumer")
+                .contains("KAFKA_TOPIC_CLIENT_EVENTS")
+                .contains("error-logs")
+                .contains("DB_URL");
     }
 
     @SuppressWarnings("unchecked")

@@ -23,6 +23,15 @@ public class RepositoryConfig {
     }
 
     /**
+     * 로그 서버 레포지토리 주소 반환
+     *
+     * @return log-server repository
+     */
+    public static String getLogServerRepository() {
+        return AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_REPOSITORY);
+    }
+
+    /**
      * 추천 실시간 Python 서버 레포지토리 주소 반환
      *
      * @return recommendation repository

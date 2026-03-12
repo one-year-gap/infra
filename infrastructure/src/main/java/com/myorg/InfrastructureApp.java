@@ -435,8 +435,11 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getRecommendationRealtimeSg(),
                 baseStacks.networkStack().getAnalysisServerSg(),
+                // NetworkStack export 충돌 회피용 임시 SG 공유
+                baseStacks.networkStack().getAnalysisServerSg(),
                 baseStacks.ecrStack().getAdminWebRepo(),
                 baseStacks.ecrStack().getApiServerRepo(),
+                baseStacks.ecrStack().getLogServerRepo(),
                 baseStacks.rdsStack().getRds(),
                 baseStacks.rdsStack().getDbSecret(),
                 ecsMskClusterName,

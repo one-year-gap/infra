@@ -29,6 +29,7 @@ public enum EnvKey {
      */
     ADMIN_WEB_REPOSITORY,
     API_SERVER_REPOSITORY,
+    LOG_SERVER_REPOSITORY("one-year-gap/log-server"),
     RECOMMENDATION_REALTIME_REPOSITORY("one-year-gap/counseling-analytics"),
 
     /*
@@ -132,6 +133,7 @@ public enum EnvKey {
     ADMIN_WEB_IMAGE_TAG,
     ADMIN_API_IMAGE_TAG,
     CUSTOMER_API_IMAGE_TAG,
+    LOG_SERVER_IMAGE_TAG("latest"),
     RECOMMENDATION_REALTIME_IMAGE_TAG("counseling-analytics-v0.0.4"),
 
     /*
@@ -143,6 +145,9 @@ public enum EnvKey {
     RECOMMENDATION_REALTIME_DESIRED_COUNT("1"),
     RECOMMENDATION_REALTIME_RUNTIME_SECRET_NAME("holliverse/prod/counseling-analytics/runtime"),
     RECOMMENDATION_REALTIME_CLOUD_MAP_NAME("recommendation-realtime"),
+    LOG_SERVER_PORT("8080"),
+    LOG_SERVER_DESIRED_COUNT("1"),
+    LOG_SERVER_SERVICE_NAME("log-server"),
     ANALYSIS_SERVER_PORT("8000"),
     ANALYSIS_SERVER_DESIRED_COUNT("0"),
     ANALYSIS_SERVER_CLOUD_MAP_NAME("analysis-server"),

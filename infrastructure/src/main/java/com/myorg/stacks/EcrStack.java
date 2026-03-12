@@ -13,6 +13,7 @@ import java.util.List;
 public class EcrStack extends Stack {
     private final Repository apiServerRepo;
     private final Repository adminWebRepo;
+    private final Repository logServerRepo;
 
     public EcrStack(final Construct scope, final String id, final StackProps props) {
         super(scope, id, props);
@@ -68,6 +69,32 @@ public class EcrStack extends Stack {
                         )
                         .build()
         );
+
+        this.logServerRepo = new Repository(
+                this,
+                "LOG-SERVER-REPO",
+                RepositoryProps.builder()
+                        .repositoryName(RepositoryConfig.getLogServerRepository())
+                        .imageTagMutability(TagMutability.MUTABLE)
+                        .imageScanOnPush(true)
+                        .removalPolicy(RemovalPolicy.RETAIN)
+                        .lifecycleRules(
+                                List.of(
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.UNTAGGED)
+                                                .description("expire untagged images after 7 days")
+                                                .maxImageAge(Duration.days(7))
+                                                .build(),
+                                        LifecycleRule
+                                                .builder()
+                                                .tagStatus(TagStatus.ANY)
+                                                .description("maintain latest images 10")
+                                                .maxImageCount(10)
+                                                .build())
+                        )
+                        .build()
+        );
     }
 
     public Repository getApiServerRepo() {
@@ -76,6 +103,10 @@ public class EcrStack extends Stack {
 
     public Repository getAdminWebRepo() {
         return adminWebRepo;
+    }
+
+    public Repository getLogServerRepo() {
+        return logServerRepo;
     }
 
 }
