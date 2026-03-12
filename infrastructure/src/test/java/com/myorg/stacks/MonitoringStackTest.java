@@ -91,7 +91,10 @@ class MonitoringStackTest {
                 .contains("kafka-cluster:AlterTopicDynamicConfiguration")
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk/*")
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:topic/holliverse-msk/*")
-                .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk/*");
+                .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk/*")
+                .contains("AWS-StartPortForwardingSessionToRemoteHost")
+                .contains("admin-api.example.internal")
+                .contains("\"localPortNumber\":[\"18080\"]");
         assertThat(renderedUserData.length()).isLessThan(25_600);
     }
 

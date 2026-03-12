@@ -25,6 +25,8 @@ public class MonitoringStack extends Stack {
     private final Instance grafanaInstance;
     private static final int[] PINPOINT_COLLECTOR_PORTS = {9991, 9992, 9993};
     private static final int MSK_IAM_PORT = 9098;
+    private static final String REMOTE_HOST_PORT_FORWARD_DOCUMENT = "AWS-StartPortForwardingSessionToRemoteHost";
+    private static final int LOCAL_PORT_FORWARD_OFFSET = 10_000;
 
     public MonitoringStack(
             Construct scope,
@@ -265,9 +267,32 @@ public class MonitoringStack extends Stack {
                        + "'")
                 .description("Port forward command for local Pinpoint access")
                 .build();
+
+        String adminApiHost = stackProps.config().adminApiServiceDnsLabel() + "." + AppConfig.getInternalDomainName();
+        CfnOutput.Builder.create(this, "AdminApiPortForward")
+                .value(buildRemoteHostPortForwardCommand(
+                        grafanaInstance.getInstanceId(),
+                        adminApiHost,
+                        stackProps.adminApiPort(),
+                        stackProps.adminApiPort() + LOCAL_PORT_FORWARD_OFFSET
+                ))
+                .description("Port forward command for local Admin API access")
+                .build();
     }
 
     public Instance getGrafanaInstance() {
         return grafanaInstance;
+    }
+
+    private String buildRemoteHostPortForwardCommand(
+            String instanceId,
+            String host,
+            int remotePort,
+            int localPort
+    ) {
+        return "aws ssm start-session --target " + instanceId
+               + " --document-name " + REMOTE_HOST_PORT_FORWARD_DOCUMENT
+               + " --parameters '{\"host\":[\"" + host + "\"],\"portNumber\":[\"" + remotePort
+               + "\"],\"localPortNumber\":[\"" + localPort + "\"]}'";
     }
 }
