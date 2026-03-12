@@ -46,6 +46,7 @@ public class EcsClusterStack extends Stack {
     private final FargateApiService adminApiService;
     private final FargateBackgroundService recommendationRealtimeService;
     private final FargateBackgroundService analysisServerService;
+    private final FargateBackgroundService logServerService;
     private final FargateWebService adminWebService;
 
     /**
@@ -72,6 +73,9 @@ public class EcsClusterStack extends Stack {
     private static final String RECOMMENDATION_REALTIME_LOG_STREAM_PREFIX = "recommendation-realtime";
     private static final String ANALYSIS_SERVER_ID = "AnalysisServer";
     private static final String ANALYSIS_SERVER_LOG_STREAM_PREFIX = "analysis-server";
+    private static final String LOG_SERVER_ID = "LogServer";
+    private static final String LOG_SERVER_LOG_STREAM_PREFIX = "log-server";
+    private static final String ERROR_LOG_TOPIC = "error-logs";
 
     /**
      * 서비스 상수
@@ -103,10 +107,12 @@ public class EcsClusterStack extends Stack {
             SecurityGroup customerApiSg,
             SecurityGroup recommendationRealtimeSg,
             SecurityGroup analysisServerSg,
+            SecurityGroup logServerSg,
 
             // EcrStack에서 내려오는 것
             Repository adminWebRepo,
             Repository apiServerRepo,
+            Repository logServerRepo,
 
             // RdsStack에서 내려오는 것
             DatabaseInstance rds,
@@ -303,6 +309,8 @@ public class EcsClusterStack extends Stack {
         int recommendationRealtimeDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_DESIRED_COUNT));
         int analysisServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_PORT));
         int analysisServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT));
+        int logServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_PORT));
+        int logServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_DESIRED_COUNT));
         Map<String, String> recommendationRealtimeEnvironment = buildRecommendationRealtimeEnvironment(
                 recommendationRealtimePort,
                 adminApiPort,
@@ -310,6 +318,11 @@ public class EcsClusterStack extends Stack {
         );
         Map<String, String> analysisServerEnvironment = buildAnalysisServerEnvironment(
                 analysisServerPort,
+                mskBootstrapBrokersSaslIam
+        );
+        Map<String, String> logServerEnvironment = buildLogServerEnvironment(
+                dbUrl,
+                logServerPort,
                 mskBootstrapBrokersSaslIam
         );
 
@@ -365,6 +378,35 @@ public class EcsClusterStack extends Stack {
                 mskTaskPolicies
         );
 
+        FargateBackgroundServiceProps logServerServiceProps = new FargateBackgroundServiceProps(
+                this,
+                LOG_SERVER_ID,
+                cluster,
+                logServerRepo,
+                AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_IMAGE_TAG),
+                logServerSg,
+                ecsLogGroup,
+                LOG_SERVER_LOG_STREAM_PREFIX,
+                privateSubnets,
+                AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_SERVICE_NAME),
+                512,
+                1024,
+                logServerDesiredCount,
+                true,
+                logServerEnvironment,
+                List.of(),
+                logServerPort,
+                dbSecret,
+                Map.of(
+                        "DB_USERNAME", "username",
+                        "DB_PASSWORD", "password"
+                ),
+                null,
+                null,
+                List.of(),
+                mskTaskPolicies
+        );
+
         /**
          * 9) Admin Web - Next.js
          */
@@ -387,6 +429,7 @@ public class EcsClusterStack extends Stack {
          */
         this.recommendationRealtimeService = new FargateBackgroundService(recommendationRealtimeServiceProps);
         this.analysisServerService = new FargateBackgroundService(analysisServerServiceProps);
+        this.logServerService = new FargateBackgroundService(logServerServiceProps);
     }
 
     public Cluster getCluster() {
@@ -431,6 +474,10 @@ public class EcsClusterStack extends Stack {
 
     public FargateBackgroundService getAnalysisServerService() {
         return analysisServerService;
+    }
+
+    public FargateBackgroundService getLogServerService() {
+        return logServerService;
     }
 
     /**
@@ -544,10 +591,6 @@ public class EcsClusterStack extends Stack {
         env.put("KAFKA_ANALYSIS_REQUEST_TOPIC", "analysis.request.v1");
         // 분석 응답 토픽
         env.put("KAFKA_ANALYSIS_RESPONSE_TOPIC", "analysis.response.v1");
-        // 클릭 로그 토픽 이름
-        env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
-        // 클릭 로그 그룹 이름
-        env.put("KAFKA_CLICK_LOG_CONSUMER_GROUP_ID", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID));
         // 분석 그룹 이름
         env.put("KAFKA_CONSUMER_GROUP_ID", "counseling-analytics-consumer");
         // offset 초기 정책
@@ -567,6 +610,50 @@ public class EcsClusterStack extends Stack {
         env.put("POSTGRES_POOL_MIN_SIZE", "1");
         // DB 풀 상한
         env.put("POSTGRES_POOL_MAX_SIZE", "2");
+        return env;
+    }
+
+    /**
+     * log-server consumer 환경값 구성.
+     */
+    private Map<String, String> buildLogServerEnvironment(
+            String dbUrl,
+            int logServerPort,
+            String mskBootstrapBrokersSaslIam
+    ) {
+        Map<String, String> env = new HashMap<>();
+        // 앱 이름
+        env.put("SPRING_APPLICATION_NAME", "log-server");
+        // 프로파일 값
+        env.put("SPRING_PROFILES_ACTIVE", "prod");
+        // 서버 포트
+        env.put("SERVER_PORT", String.valueOf(logServerPort));
+        // DB URL 값
+        env.put("DB_URL", dbUrl);
+        // DDL 정책
+        env.put("JPA_DDL_AUTO", "validate");
+        // 브로커 주소
+        env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+        // 보안 프로토콜
+        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+        // SASL 메커니즘
+        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+        // IAM JAAS 설정
+        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+        // IAM 콜백 핸들러
+        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+        // 원본 로그 토픽
+        env.put("KAFKA_TOPIC_CLIENT_EVENTS", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
+        // DLQ 토픽
+        env.put("KAFKA_TOPIC_ERROR", ERROR_LOG_TOPIC);
+        // speed group 값
+        env.put("KAFKA_GROUP_SPEED", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID));
+        // poll 크기
+        env.put("KAFKA_MAX_POLL_RECORDS", "1");
+        // DLQ acks 값
+        env.put("KAFKA_DLQ_ACKS", "all");
+        // DLQ retry 값
+        env.put("KAFKA_DLQ_RETRIES", "3");
         return env;
     }
 
