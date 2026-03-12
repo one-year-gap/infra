@@ -224,6 +224,7 @@ class NetworkStackTest {
         void should_connect_internet_gateway(){
             template.resourceCountIs("AWS::EC2::InternetGateway",1);
         }
+
     }
 
     @Nested

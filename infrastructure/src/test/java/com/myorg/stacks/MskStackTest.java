@@ -60,7 +60,7 @@ class MskStackTest {
         org.assertj.core.api.Assertions.assertThat(templateJson)
                 .contains("kafka.t3.small")
                 .contains("TLS")
-                .contains("click.logs.raw.v1")
+                .contains("client-event-logs")
                 .contains("click-log-consumer");
     }
 }
