@@ -152,7 +152,7 @@ class EcsClusterStackTest {
         String templateJson = template.toJSON().toString();
         org.assertj.core.api.Assertions.assertThat(templateJson)
                 .contains("KAFKA_CLICK_LOG_TOPIC")
-                .contains("click.logs.raw.v1")
+                .contains("client-event-logs")
                 .contains("KAFKA_CLICK_LOG_CONSUMER_GROUP_ID")
                 .contains("click-log-consumer");
     }

@@ -48,8 +48,13 @@ public enum EnvKey {
     MSK_BROKER_INSTANCE_TYPE("kafka.t3.small"),
     MSK_BROKER_NODES("4"),
     MSK_BROKER_VOLUME_GIB("10"),
-    CLICK_LOG_TOPIC("click.logs.raw.v1"),
+    MSK_CONNECT_VERSION("3.7.x"),
+    MSK_CONNECT_WORKER_COUNT("1"),
+    MSK_CONNECT_MCU_COUNT("1"),
+    MSK_CONNECT_PLUGIN_ASSET_PATH("assets/msk-connect/confluentinc-kafka-connect-s3-12.1.1.zip"),
+    CLICK_LOG_TOPIC("client-event-logs"),
     CLICK_LOG_CONSUMER_GROUP_ID("click-log-consumer"),
+    CLICK_LOG_BUCKET_NAME("holiverse-log"),
 
     /*
      * =================================================================

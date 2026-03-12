@@ -31,6 +31,8 @@ public class InfrastructureApp {
     private static final String DNS_STACK_ID = "DnsStack";
     private static final String MONITORING_STACK_ID = "MonitoringStack";
     private static final String MSK_STACK_ID = "MskStack";
+    private static final String CLICK_LOG_BUCKET_STACK_ID = "ClickLogBucketStack";
+    private static final String MSK_CONNECT_STACK_ID = "MskConnectStack";
     private static final String DEFAULT_IMAGE_TAG = "latest";
     private static final String LOG_ARCHIVE_STACK_ID = "LogArchiveStack";
     private static final String ON_DEMAND_WORKFLOW_STACK_ID = "OnDemandWorkflowStack";
@@ -47,6 +49,7 @@ public class InfrastructureApp {
     private static final String DEPLOY_MODE_DNS = "dns";
     private static final String DEPLOY_MODE_MONITORING = "monitoring";
     private static final String DEPLOY_MODE_MSK = "msk";
+    private static final String DEPLOY_MODE_MSK_CONNECT = "msk-connect";
     private static final String DEPLOY_MODE_FULL = "full";
     private static final String DEPLOY_MODE_LOG_ARCHIVE = "log-archive";
     private static final String DEPLOY_MODE_ON_DEMAND_WORKFLOW = "on-demand-workflow";
@@ -69,7 +72,9 @@ public class InfrastructureApp {
             case DEPLOY_MODE_ALB_WAF -> deployAlbWaf(deploymentContext);
             case DEPLOY_MODE_MONITORING -> deployMonitoring(deploymentContext);
             case DEPLOY_MODE_MSK -> deployMsk(deploymentContext);
-            case DEPLOY_MODE_DNS, DEPLOY_MODE_FULL -> deployDns(deploymentContext);
+            case DEPLOY_MODE_MSK_CONNECT -> deployMskConnect(deploymentContext);
+            case DEPLOY_MODE_DNS -> deployDns(deploymentContext);
+            case DEPLOY_MODE_FULL -> deployFull(deploymentContext);
             case DEPLOY_MODE_LOG_ARCHIVE -> deployLogArchive(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_LOCK -> deployOnDemandLock(deploymentContext);
             case DEPLOY_MODE_ON_DEMAND_WORKFLOW -> deployOnDemandWorkflow(deploymentContext);
@@ -198,6 +203,37 @@ public class InfrastructureApp {
     }
 
     /**
+     * click log sink 전용 스택 배포.
+     */
+    private static void deployMskConnect(DeploymentContext context) {
+        BaseStacks baseStacks = createBaseStacks(context);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        ClickLogBucketStack clickLogBucketStack = createClickLogBucketStack(context);
+        createMskConnectStack(context, baseStacks.networkStack(), mskStack, clickLogBucketStack);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
+        createDnsStack(context, albStack);
+
+        MonitoringStackProps monitoringProps = new MonitoringStackProps(
+                baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getDbSg(),
+                baseStacks.networkStack().getAdminApiSg(),
+                baseStacks.networkStack().getCustomerApiSg(),
+                baseStacks.networkStack().getKafkaBrokerSg(),
+                PortConfig.getAdminServerPort(),
+                PortConfig.getCustomerServerPort(),
+                MonitoringConfig.fromEnv()
+        );
+        new MonitoringStack(
+                context.app(),
+                MONITORING_STACK_ID,
+                context.stackProps(),
+                monitoringProps
+        );
+    }
+
+    /**
      * Loki용 S3 Bucket Stack 배포
      */
     private static void deployLogArchive(DeploymentContext deploymentContext) {
@@ -247,6 +283,20 @@ public class InfrastructureApp {
     private static void deployDns(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
         MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
+        createDnsStack(context, albStack);
+    }
+
+    /**
+     * click log sink까지 포함한 전체 스택 배포.
+     */
+    private static void deployFull(DeploymentContext context) {
+        BaseStacks baseStacks = createBaseStacks(context);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        ClickLogBucketStack clickLogBucketStack = createClickLogBucketStack(context);
+        createMskConnectStack(context, baseStacks.networkStack(), mskStack, clickLogBucketStack);
         EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
@@ -322,6 +372,44 @@ public class InfrastructureApp {
         return mskStack;
     }
 
+    /**
+     * raw click log 버킷 스택 생성.
+     */
+    private static ClickLogBucketStack createClickLogBucketStack(DeploymentContext context) {
+        return new ClickLogBucketStack(
+                context.app(),
+                CLICK_LOG_BUCKET_STACK_ID,
+                context.stackProps(),
+                AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_BUCKET_NAME)
+        );
+    }
+
+    /**
+     * S3 sink용 MSK Connect 스택 생성.
+     */
+    private static MskConnectStack createMskConnectStack(
+            DeploymentContext context,
+            NetworkStack networkStack,
+            MskStack mskStack,
+            ClickLogBucketStack clickLogBucketStack
+    ) {
+        return new MskConnectStack(
+                context.app(),
+                MSK_CONNECT_STACK_ID,
+                context.stackProps(),
+                networkStack.getVpc(),
+                networkStack.getKafkaBrokerSg().getSecurityGroupId(),
+                AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME),
+                mskStack.getBootstrapBrokersSaslIam(),
+                mskStack.getCluster().getAttrArn(),
+                mskStack.getClickLogTopicName(),
+                clickLogBucketStack.getBucket()
+        );
+    }
+
+    /**
+     * ECS 서비스 스택 생성.
+     */
     private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks, MskStack mskStack) {
         String legacyApiImageTag = AppConfig.getOptionalValueOrDefault("API_IMAGE_TAG", DEFAULT_IMAGE_TAG);
         String ecsMskClusterName = AppConfig.getOptionalValueOrDefault(
