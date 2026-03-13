@@ -31,6 +31,7 @@ import software.constructs.Construct;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -371,7 +372,7 @@ public class EcsClusterStack extends Stack {
                 List.of(),
                 analysisServerPort,
                 recommendationRealtimeRuntimeSecret,
-                buildRecommendationRuntimeSecretMapping(),
+                buildAnalysisServerRuntimeSecretMapping(),
                 serviceNs,
                 AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_CLOUD_MAP_NAME),
                 List.of(),
@@ -557,6 +558,14 @@ public class EcsClusterStack extends Stack {
         env.put("POSTGRES_POOL_MIN_SIZE", "1");
         env.put("POSTGRES_POOL_MAX_SIZE", "2");
         env.put(
+                "OPENAI_CHAT_MODEL",
+                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_OPENAI_CHAT_MODEL)
+        );
+        env.put(
+                "OPENAI_EMBEDDING_MODEL",
+                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_OPENAI_EMBEDDING_MODEL)
+        );
+        env.put(
                 "ADMIN_API_BASE_URL",
                 "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
         );
@@ -578,7 +587,10 @@ public class EcsClusterStack extends Stack {
         env.put("PYTHONUNBUFFERED", "1");
 
         // consumer 활성값
-        env.put("KAFKA_CONSUMER_ENABLED", "true");
+        env.put(
+                "KAFKA_CONSUMER_ENABLED",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_ENABLED)
+        );
         // IAM 브로커 주소
         env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
         // SASL 프로토콜
@@ -588,28 +600,101 @@ public class EcsClusterStack extends Stack {
         // AWS 리전 값
         env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
         // 분석 요청 토픽
-        env.put("KAFKA_ANALYSIS_REQUEST_TOPIC", "analysis.request.v1");
+        env.put(
+                "KAFKA_ANALYSIS_REQUEST_TOPIC",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_REQUEST_TOPIC)
+        );
         // 분석 응답 토픽
-        env.put("KAFKA_ANALYSIS_RESPONSE_TOPIC", "analysis.response.v1");
+        env.put(
+                "KAFKA_ANALYSIS_RESPONSE_TOPIC",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_RESPONSE_TOPIC)
+        );
         // 분석 그룹 이름
-        env.put("KAFKA_CONSUMER_GROUP_ID", "counseling-analytics-consumer");
+        env.put(
+                "KAFKA_CONSUMER_GROUP_ID",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_GROUP_ID)
+        );
         // offset 초기 정책
-        env.put("KAFKA_AUTO_OFFSET_RESET", "earliest");
+        env.put(
+                "KAFKA_AUTO_OFFSET_RESET",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_AUTO_OFFSET_RESET)
+        );
+        // poll interval 상한
+        env.put(
+                "KAFKA_MAX_POLL_INTERVAL_MS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_MAX_POLL_INTERVAL_MS)
+        );
+        // 세션 타임아웃
+        env.put(
+                "KAFKA_SESSION_TIMEOUT_MS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_SESSION_TIMEOUT_MS)
+        );
+        // heartbeat 간격
+        env.put(
+                "KAFKA_HEARTBEAT_INTERVAL_MS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_HEARTBEAT_INTERVAL_MS)
+        );
         // 배치 크기
-        env.put("KAFKA_BATCH_SIZE", "1000");
+        env.put(
+                "KAFKA_BATCH_SIZE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_BATCH_SIZE)
+        );
         // poll 대기 시간
-        env.put("KAFKA_POLL_TIMEOUT_MS", "1000");
+        env.put(
+                "KAFKA_POLL_TIMEOUT_MS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_POLL_TIMEOUT_MS)
+        );
         // 메시지 로그 여부
-        env.put("KAFKA_LOG_EACH_MESSAGE", "true");
+        env.put(
+                "KAFKA_LOG_EACH_MESSAGE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_EACH_MESSAGE)
+        );
         // 결과 로그 상한
-        env.put("KAFKA_LOG_RESULT_LIMIT", "20");
+        env.put(
+                "KAFKA_LOG_RESULT_LIMIT",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_RESULT_LIMIT)
+        );
         // 응답 재시도 횟수
-        env.put("KAFKA_RESPONSE_MAX_ATTEMPTS", "3");
+        env.put(
+                "KAFKA_RESPONSE_MAX_ATTEMPTS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RESPONSE_MAX_ATTEMPTS)
+        );
+        // 추천 결과 발행 토픽
+        env.put(
+                "KAFKA_RECOMMENDATION_TOPIC",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RECOMMENDATION_TOPIC)
+        );
+        // OpenAI 채팅 모델
+        env.put(
+                "OPENAI_CHAT_MODEL",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_OPENAI_CHAT_MODEL)
+        );
+        // 임베딩 모델
+        env.put(
+                "OPENAI_EMBEDDING_MODEL",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_OPENAI_EMBEDDING_MODEL)
+        );
+        // 추천 개수 상한
+        env.put(
+                "RECOMMEND_TOP_K",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_RECOMMEND_TOP_K)
+        );
+        // 캐시 TTL
+        env.put(
+                "CACHE_TTL_DAYS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_CACHE_TTL_DAYS)
+        );
 
         // DB 풀 하한
-        env.put("POSTGRES_POOL_MIN_SIZE", "1");
+        env.put(
+                "POSTGRES_POOL_MIN_SIZE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_POSTGRES_POOL_MIN_SIZE)
+        );
         // DB 풀 상한
-        env.put("POSTGRES_POOL_MAX_SIZE", "2");
+        env.put(
+                "POSTGRES_POOL_MAX_SIZE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_POSTGRES_POOL_MAX_SIZE)
+        );
         return env;
     }
 
@@ -658,13 +743,26 @@ public class EcsClusterStack extends Stack {
     }
 
     private Map<String, String> buildRecommendationRuntimeSecretMapping() {
-        return Map.of(
-                "POSTGRES_HOST", "POSTGRES_HOST",
-                "POSTGRES_PORT", "POSTGRES_PORT",
-                "POSTGRES_DB", "POSTGRES_DB",
-                "POSTGRES_USER", "POSTGRES_USER",
-                "POSTGRES_PASSWORD", "POSTGRES_PASSWORD"
-        );
+        Map<String, String> secretJsonKeyByEnvName = new LinkedHashMap<>();
+        secretJsonKeyByEnvName.put("POSTGRES_USER", "POSTGRES_USER");
+        secretJsonKeyByEnvName.put("POSTGRES_HOST", "POSTGRES_HOST");
+        secretJsonKeyByEnvName.put("POSTGRES_PASSWORD", "POSTGRES_PASSWORD");
+        secretJsonKeyByEnvName.put("POSTGRES_PORT", "POSTGRES_PORT");
+        secretJsonKeyByEnvName.put("POSTGRES_DB", "POSTGRES_DB");
+        secretJsonKeyByEnvName.put("OPENAI_API_KEY", "OPENAI_API_KEY");
+        return secretJsonKeyByEnvName;
+    }
+
+    private Map<String, String> buildAnalysisServerRuntimeSecretMapping() {
+        Map<String, String> secretJsonKeyByEnvName = new LinkedHashMap<>();
+        secretJsonKeyByEnvName.put("POSTGRES_USER", "POSTGRES_USER");
+        secretJsonKeyByEnvName.put("POSTGRES_DSN", "POSTGRES_DSN");
+        secretJsonKeyByEnvName.put("POSTGRES_HOST", "POSTGRES_HOST");
+        secretJsonKeyByEnvName.put("POSTGRES_PASSWORD", "POSTGRES_PASSWORD");
+        secretJsonKeyByEnvName.put("POSTGRES_PORT", "POSTGRES_PORT");
+        secretJsonKeyByEnvName.put("POSTGRES_DB", "POSTGRES_DB");
+        secretJsonKeyByEnvName.put("OPENAI_API_KEY", "OPENAI_API_KEY");
+        return secretJsonKeyByEnvName;
     }
 
     private List<String> resolveArns(String singleArnEnvKey, String csvArnEnvKey) {
