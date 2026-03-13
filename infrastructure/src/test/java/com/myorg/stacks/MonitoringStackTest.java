@@ -18,6 +18,8 @@ import software.amazon.awscdk.assertions.Template;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.Vpc;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -96,8 +98,34 @@ class MonitoringStackTest {
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk/*")
                 .contains("AWS-StartPortForwardingSessionToRemoteHost")
                 .contains("admin-api.example.internal")
+                .contains("KafkaUiPortForward")
+                .contains("\"localPortNumber\":[\"18088\"]")
                 .contains("\"localPortNumber\":[\"18080\"]");
         assertThat(renderedUserData.length()).isLessThan(25_600);
+    }
+
+    @Test
+    @DisplayName("Monitoring bootstrap asset에는 Kafka UI 기동 스크립트가 포함되어야 한다.")
+    void should_render_kafka_ui_bootstrap_script() throws Exception {
+        MonitoringConfig config = testMonitoringConfig();
+
+        Path assetPath = config.renderMonitoringBootstrapAsset(
+                "ap-northeast-2",
+                "example.internal",
+                8080,
+                8081,
+                "b-1.test.kafka.ap-northeast-2.amazonaws.com:9098,b-2.test.kafka.ap-northeast-2.amazonaws.com:9098"
+        );
+
+        String bootstrapScript = Files.readString(
+                assetPath.resolve("opt/monitoring/bootstrap-monitoring.sh")
+        );
+
+        assertThat(bootstrapScript)
+                .contains("kafka-ui")
+                .contains("KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=b-1.test.kafka.ap-northeast-2.amazonaws.com:9098,b-2.test.kafka.ap-northeast-2.amazonaws.com:9098")
+                .contains("KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM=AWS_MSK_IAM")
+                .contains("127.0.0.1:8088:8080");
     }
 
     private MonitoringConfig testMonitoringConfig() {
