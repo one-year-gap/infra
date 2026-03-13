@@ -10,6 +10,7 @@ import software.amazon.awscdk.services.iam.Role;
 import software.constructs.Construct;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -94,6 +95,15 @@ public class FargateApiService extends Construct {
         props.dbSecret().grantRead(Objects.requireNonNull(taskDefinition.getExecutionRole()));
 
         Map<String, String> environment = buildBaseEnvironment(props);
+        Map<String, software.amazon.awscdk.services.ecs.Secret> datasourceSecrets = new LinkedHashMap<>();
+        datasourceSecrets.put(
+                SPRING_DATASOURCE_PASSWORD,
+                software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "password")
+        );
+        datasourceSecrets.put(
+                SPRING_DATASOURCE_USERNAME,
+                software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "username")
+        );
         PinpointSettings pinpointSettings = resolvePinpointSettings(props);
 
         ContainerDefinition pinpointInitContainer = null;
@@ -140,12 +150,7 @@ public class FargateApiService extends Construct {
                                 .streamPrefix(props.logStreamPrefix())
                                 .build()))
                         .environment(environment)
-                        .secrets(Map.of(
-                                //Secret Manager JSON key("username")
-                                SPRING_DATASOURCE_USERNAME, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "username"),
-                                //Secret Manage JSON key("password")
-                                SPRING_DATASOURCE_PASSWORD, software.amazon.awscdk.services.ecs.Secret.fromSecretsManager(props.dbSecret(), "password")
-                        ))
+                        .secrets(datasourceSecrets)
                         .build()
         );
 

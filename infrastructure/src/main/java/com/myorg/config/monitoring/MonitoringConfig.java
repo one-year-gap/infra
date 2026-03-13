@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
  * Monitoring Infra 공통 설정
  * - EC2 스펙, 네트워크, SSM, DB Secret, Prometheus/PgExporter 설정
  * - Grafana 상세 설정: {@link GrafanaConfig}
+ * - Kafka UI 상세 설정: {@link KafkaUiConfig}
  * - Pinpoint 설정: {@link PinpointConfig}
  */
 public record MonitoringConfig(
@@ -42,6 +43,7 @@ public record MonitoringConfig(
         int prometheusPort,
         String prometheusScrapeInterval,
         int autoDashboardPanelLimit,
+        KafkaUiConfig kafkaUiConfig,
 
         // pg_exporter
         String pgExporterContainerName,
@@ -81,6 +83,7 @@ public record MonitoringConfig(
                 AppConfig.getValueOrDefault(EnvKey.MONITORING_PROMETHEUS_SCRAPE_INTERVAL),
                 Integer.parseInt(AppConfig
                         .getValueOrDefault(EnvKey.MONITORING_AUTO_DASHBOARD_PANEL_LIMIT)),
+                KafkaUiConfig.fromEnv(),
                 AppConfig.getValueOrDefault(EnvKey.MONITORING_PG_EXPORTER_CONTAINER_NAME),
                 AppConfig.getValueOrDefault(EnvKey.MONITORING_PG_EXPORTER_IMAGE),
                 Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.MONITORING_PG_EXPORTER_PORT)),
@@ -175,9 +178,15 @@ public record MonitoringConfig(
             String region,
             String internalDomain,
             int adminApiPort,
-            int customerApiPort) {
-        Map<String, String> templateValues = buildTemplateValues(region, internalDomain, adminApiPort,
-                customerApiPort);
+            int customerApiPort,
+            String mskBootstrapBrokersSaslIam) {
+        Map<String, String> templateValues = buildTemplateValues(
+                region,
+                internalDomain,
+                adminApiPort,
+                customerApiPort,
+                mskBootstrapBrokersSaslIam
+        );
 
         List<String> commands = new ArrayList<>();
         commands.add("mkdir -p " + MonitoringPaths.BASE_DIR);
@@ -245,9 +254,16 @@ public record MonitoringConfig(
             String region,
             String internalDomain,
             int adminApiPort,
-            int customerApiPort
+            int customerApiPort,
+            String mskBootstrapBrokersSaslIam
     ) {
-        Map<String, String> templateValues = buildTemplateValues(region, internalDomain, adminApiPort, customerApiPort);
+        Map<String, String> templateValues = buildTemplateValues(
+                region,
+                internalDomain,
+                adminApiPort,
+                customerApiPort,
+                mskBootstrapBrokersSaslIam
+        );
         Path assetRoot = Path.of("build/generated/monitoring-bootstrap");
 
         recreateDirectory(assetRoot);
@@ -290,8 +306,10 @@ public record MonitoringConfig(
             String region,
             String internalDomain,
             int adminApiPort,
-            int customerApiPort) {
+            int customerApiPort,
+            String mskBootstrapBrokersSaslIam) {
         GrafanaConfig g = grafanaConfig;
+        KafkaUiConfig k = kafkaUiConfig;
         PinpointConfig p = pinpointConfig;
 
         String adminApiMetricsTarget = adminApiServiceDnsLabel + "." + internalDomain + ":" + adminApiPort;
@@ -314,6 +332,11 @@ public record MonitoringConfig(
         values.put("PROMETHEUSSCRAPEINTERVAL", prometheusScrapeInterval);
         values.put("PGEXPORTERPROMETHEUSJOBNAME", pgExporterPrometheusJobName);
         values.put("PGEXPORTERPORT", String.valueOf(pgExporterPort));
+        values.put("KAFKAUICONTAINERNAME", k.containerName());
+        values.put("KAFKAUIIMAGE", k.image());
+        values.put("KAFKAUIPORT", String.valueOf(k.kafkaUiPort()));
+        values.put("KAFKAUICLUSTERNAME", AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME));
+        values.put("MSKBOOTSTRAPBROKERSSASLIAM", mskBootstrapBrokersSaslIam);
         values.put("ADMINAPIPROMETHEUSJOBNAME", adminApiPrometheusJobName);
         values.put("ADMINAPIMETRICSTARGET", adminApiMetricsTarget);
         values.put("CUSTOMERAPIPROMETHEUSJOBNAME", customerApiPrometheusJobName);
