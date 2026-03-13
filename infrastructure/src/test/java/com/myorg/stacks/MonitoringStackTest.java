@@ -3,6 +3,7 @@ package com.myorg.stacks;
 import com.myorg.config.EnvKey;
 import com.myorg.config.monitoring.AlloyConfig;
 import com.myorg.config.monitoring.GrafanaConfig;
+import com.myorg.config.monitoring.KafkaUiConfig;
 import com.myorg.config.monitoring.LokiConfig;
 import com.myorg.config.monitoring.MonitoringConfig;
 import com.myorg.config.monitoring.PinpointConfig;
@@ -65,6 +66,7 @@ class MonitoringStackTest {
                         adminApiSg,
                         customerApiSg,
                         kafkaBrokerSg,
+                        "b-1.test.kafka.ap-northeast-2.amazonaws.com:9098,b-2.test.kafka.ap-northeast-2.amazonaws.com:9098",
                         8080,
                         8081,
                         testMonitoringConfig()
@@ -113,6 +115,12 @@ class MonitoringStackTest {
                 Integer.parseInt(EnvKey.MONITORING_PROMETHEUS_PORT.getDefaultValue()),
                 EnvKey.MONITORING_PROMETHEUS_SCRAPE_INTERVAL.getDefaultValue(),
                 Integer.parseInt(EnvKey.MONITORING_AUTO_DASHBOARD_PANEL_LIMIT.getDefaultValue()),
+                new KafkaUiConfig(
+                        EnvKey.MONITORING_KAFKA_UI_CONTAINER_NAME.getDefaultValue(),
+                        EnvKey.MONITORING_KAFKA_UI_IMAGE.getDefaultValue(),
+                        Integer.parseInt(EnvKey.MONITORING_KAFKA_UI_PORT.getDefaultValue()),
+                        Integer.parseInt(EnvKey.MONITORING_KAFKA_UI_LOCAL_FORWARD_PORT.getDefaultValue())
+                ),
                 EnvKey.MONITORING_PG_EXPORTER_CONTAINER_NAME.getDefaultValue(),
                 EnvKey.MONITORING_PG_EXPORTER_IMAGE.getDefaultValue(),
                 Integer.parseInt(EnvKey.MONITORING_PG_EXPORTER_PORT.getDefaultValue()),

@@ -10,6 +10,7 @@ public record MonitoringStackProps(
         SecurityGroup adminApiSg,
         SecurityGroup customerApiSg,
         SecurityGroup kafkaBrokerSg,
+        String mskBootstrapBrokersSaslIam,
         int adminApiPort,
         int customerApiPort,
         MonitoringConfig config

@@ -205,7 +205,8 @@ public class MonitoringStack extends Stack {
                 AppConfig.getRegion(),
                 AppConfig.getInternalDomainName(),
                 stackProps.adminApiPort(),
-                stackProps.customerApiPort()
+                stackProps.customerApiPort(),
+                stackProps.mskBootstrapBrokersSaslIam()
         );
         Asset monitoringBootstrapAsset = Asset.Builder.create(this, "MonitoringBootstrapAsset")
                 .path(monitoringBootstrapAssetPath.toString())
@@ -266,6 +267,14 @@ public class MonitoringStack extends Stack {
                         stackProps.config().ssmPortForwardDocument())
                        + "'")
                 .description("Port forward command for local Pinpoint access")
+                .build();
+        CfnOutput.Builder.create(this, "KafkaUiPortForward")
+                .value("aws ssm start-session --target " + grafanaInstance.getInstanceId()
+                       + " --document-name " + stackProps.config().ssmPortForwardDocument()
+                       + " --parameters '"
+                       + stackProps.config().kafkaUiConfig().ssmPortForwardParametersJson()
+                       + "'")
+                .description("Port forward command for local Kafka UI access")
                 .build();
 
         String adminApiHost = stackProps.config().adminApiServiceDnsLabel() + "." + AppConfig.getInternalDomainName();

@@ -151,12 +151,14 @@ public class InfrastructureApp {
      */
     private static void deployMonitoring(DeploymentContext context) {
         NetworkStack networkStack = createNetworkStack(context);
+        MskStack mskStack = createMskStack(context, networkStack);
         MonitoringStackProps props = new MonitoringStackProps(
                 networkStack.getVpc(),
                 networkStack.getDbSg(),
                 networkStack.getAdminApiSg(),
                 networkStack.getCustomerApiSg(),
                 networkStack.getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -188,6 +190,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -221,6 +224,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
