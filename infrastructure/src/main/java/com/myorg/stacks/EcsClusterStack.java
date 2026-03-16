@@ -201,7 +201,10 @@ public class EcsClusterStack extends Stack {
                 "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN",
                 "CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS"
         );
-        List<PolicyStatement> mskTaskPolicies = buildMskTaskPolicies(mskClusterName, mskClusterArn);
+        boolean kafkaEnabled = isKafkaEnabled(mskClusterName, mskClusterArn, mskBootstrapBrokersSaslIam);
+        List<PolicyStatement> mskTaskPolicies = kafkaEnabled
+                ? buildMskTaskPolicies(mskClusterName, mskClusterArn)
+                : List.of();
 
         /**
          * 5) API Server Kafka secret
@@ -309,9 +312,13 @@ public class EcsClusterStack extends Stack {
         int recommendationRealtimePort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT));
         int recommendationRealtimeDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_DESIRED_COUNT));
         int analysisServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_PORT));
-        int analysisServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT));
+        int analysisServerDesiredCount = kafkaEnabled
+                ? Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT))
+                : 0;
         int logServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_PORT));
-        int logServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_DESIRED_COUNT));
+        int logServerDesiredCount = kafkaEnabled
+                ? Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_DESIRED_COUNT))
+                : 0;
         Map<String, String> recommendationRealtimeEnvironment = buildRecommendationRealtimeEnvironment(
                 recommendationRealtimePort,
                 adminApiPort,
@@ -319,6 +326,7 @@ public class EcsClusterStack extends Stack {
         );
         Map<String, String> analysisServerEnvironment = buildAnalysisServerEnvironment(
                 analysisServerPort,
+                adminApiPort,
                 mskBootstrapBrokersSaslIam
         );
         Map<String, String> logServerEnvironment = buildLogServerEnvironment(
@@ -343,7 +351,8 @@ public class EcsClusterStack extends Stack {
                 recommendationRealtimeDesiredCount,
                 true,
                 recommendationRealtimeEnvironment,
-                List.of(),
+                kafkaEnabled ? recommendationRealtimeHotfixEntryPoint() : List.of(),
+                kafkaEnabled ? recommendationRealtimeHotfixCommand() : List.of(),
                 recommendationRealtimePort,
                 recommendationRealtimeRuntimeSecret,
                 buildRecommendationRuntimeSecretMapping(),
@@ -370,6 +379,7 @@ public class EcsClusterStack extends Stack {
                 true,
                 analysisServerEnvironment,
                 List.of(),
+                List.of(),
                 analysisServerPort,
                 recommendationRealtimeRuntimeSecret,
                 buildAnalysisServerRuntimeSecretMapping(),
@@ -395,6 +405,7 @@ public class EcsClusterStack extends Stack {
                 logServerDesiredCount,
                 true,
                 logServerEnvironment,
+                List.of(),
                 List.of(),
                 logServerPort,
                 dbSecret,
@@ -490,19 +501,21 @@ public class EcsClusterStack extends Stack {
         env.put("DB_POOL_MAX", "10");
         // DB 풀 하한
         env.put("DB_POOL_MIN", "1");
-        // Kafka 시크릿 이름
-        env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
-        // api-server가 secret import 실패 시 localhost 기본값으로 떨어지지 않도록
-        // Kafka 연결값은 컨테이너 env로도 직접 주입한다.
-        env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
-        // SASL 프로토콜
-        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        // SASL 메커니즘
-        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
-        // IAM 로그인 모듈
-        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
-        // IAM 콜백 핸들러
-        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+        if (hasText(mskBootstrapBrokersSaslIam)) {
+            // Kafka 시크릿 이름
+            env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
+            // api-server가 secret import 실패 시 localhost 기본값으로 떨어지지 않도록
+            // Kafka 연결값은 컨테이너 env로도 직접 주입한다.
+            env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            // SASL 프로토콜
+            env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+            // SASL 메커니즘
+            env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+            // IAM 로그인 모듈
+            env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+            // IAM 콜백 핸들러
+            env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+        }
         // admin-api는 private recommendation service를 내부 DNS로 호출한다.
         env.put(
                 "FASTAPI_BASE_URL",
@@ -522,20 +535,22 @@ public class EcsClusterStack extends Stack {
         env.put("DB_POOL_MAX", "10");
         // DB 풀 하한
         env.put("DB_POOL_MIN", "1");
-        // Kafka 시크릿 이름
-        env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
-        // IAM 브로커 주소
-        env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
-        // SASL 프로토콜
-        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        // SASL 메커니즘
-        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
-        // IAM 로그인 모듈
-        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
-        // IAM 콜백 핸들러
-        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
-        // 클릭 로그 토픽 이름
-        env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
+        if (hasText(mskBootstrapBrokersSaslIam)) {
+            // Kafka 시크릿 이름
+            env.put("KAFKA_SECRET_NAME", AppConfig.getValueOrDefault(EnvKey.API_SERVER_KAFKA_SECRET_NAME));
+            // IAM 브로커 주소
+            env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            // SASL 프로토콜
+            env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+            // SASL 메커니즘
+            env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+            // IAM 로그인 모듈
+            env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+            // IAM 콜백 핸들러
+            env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+            // 클릭 로그 토픽 이름
+            env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
+        }
         return env;
     }
 
@@ -554,6 +569,18 @@ public class EcsClusterStack extends Stack {
         env.put("APP_PORT", String.valueOf(recommendationRealtimePort));
         env.put("PYTHONUNBUFFERED", "1");
         env.put("KAFKA_CONSUMER_ENABLED", "false");
+        if (hasText(mskBootstrapBrokersSaslIam)) {
+            // realtime 모드도 추천 결과를 Kafka에 발행하므로 bootstrap/config 기본값으로 떨어지지 않게 명시한다.
+            env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+            env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
+            env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
+            env.put(
+                    "KAFKA_RECOMMENDATION_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RECOMMENDATION_TOPIC)
+            );
+        }
 
         env.put("POSTGRES_POOL_MIN_SIZE", "1");
         env.put("POSTGRES_POOL_MAX_SIZE", "2");
@@ -573,10 +600,60 @@ public class EcsClusterStack extends Stack {
     }
 
     /**
+     * 배포된 recommendation image에 producer IAM 옵션 반영 전까지 startup patch를 적용한다.
+     */
+    private List<String> recommendationRealtimeHotfixEntryPoint() {
+        return List.of("/bin/sh", "-lc");
+    }
+
+    /**
+     * recommendation producer가 localhost 기본값으로 떨어지지 않도록 컨테이너 시작 시 patch한다.
+     */
+    private List<String> recommendationRealtimeHotfixCommand() {
+        return List.of("""
+                echo '[hotfix] patching recommendation_service.py for MSK IAM auth'
+                python - <<'PY'
+                from pathlib import Path
+                import re
+
+                p = Path("/app/app/services/recommendation_service.py")
+                s = p.read_text()
+                imp_old = "from aiokafka import AIOKafkaProducer\\n"
+                imp_new = "from aiokafka import AIOKafkaProducer\\n\\nfrom app.infra.kafka.client_options import build_kafka_client_options\\n"
+                pattern = re.compile(
+                    r"    producer = AIOKafkaProducer\\(\\n"
+                    r"(?:        bootstrap_servers=\\[s\\.strip\\(\\) for s in bootstrap\\.split\\(\",\"\\) if s\\.strip\\(\\)\\],\\n)?"
+                    r"        value_serializer=lambda v: json\\.dumps\\(v, ensure_ascii=False\\)\\.encode\\(\"utf-8\"\\),\\n"
+                    r"    \\)\\n",
+                    re.MULTILINE,
+                )
+                replacement = (
+                    "    producer = AIOKafkaProducer(\\n"
+                    "        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode(\\"utf-8\\"),\\n"
+                    "        **build_kafka_client_options(settings),\\n"
+                    "    )\\n"
+                )
+
+                if "from app.infra.kafka.client_options import build_kafka_client_options" not in s:
+                    s = s.replace(imp_old, imp_new, 1)
+
+                s, count = pattern.subn(replacement, s, count=1)
+
+                if count == 0 and replacement not in s:
+                    raise SystemExit("producer block not found")
+
+                p.write_text(s)
+                PY
+                exec /app/docker-entrypoint.sh
+                """.strip());
+    }
+
+    /**
      * analysis-server consumer 환경값 구성.
      */
     private Map<String, String> buildAnalysisServerEnvironment(
             int analysisServerPort,
+            int adminApiPort,
             String mskBootstrapBrokersSaslIam
     ) {
         Map<String, String> env = new HashMap<>();
@@ -585,85 +662,93 @@ public class EcsClusterStack extends Stack {
         env.put("DEBUG", "false");
         env.put("APP_PORT", String.valueOf(analysisServerPort));
         env.put("PYTHONUNBUFFERED", "1");
+        env.put(
+                "ADMIN_API_BASE_URL",
+                "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
+        );
 
         // consumer 활성값
         env.put(
                 "KAFKA_CONSUMER_ENABLED",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_ENABLED)
+                hasText(mskBootstrapBrokersSaslIam)
+                        ? AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_ENABLED)
+                        : "false"
         );
-        // IAM 브로커 주소
-        env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
-        // SASL 프로토콜
-        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        // SASL 메커니즘
-        env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
-        // AWS 리전 값
-        env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
-        // 분석 요청 토픽
-        env.put(
-                "KAFKA_ANALYSIS_REQUEST_TOPIC",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_REQUEST_TOPIC)
-        );
-        // 분석 응답 토픽
-        env.put(
-                "KAFKA_ANALYSIS_RESPONSE_TOPIC",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_RESPONSE_TOPIC)
-        );
-        // 분석 그룹 이름
-        env.put(
-                "KAFKA_CONSUMER_GROUP_ID",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_GROUP_ID)
-        );
-        // offset 초기 정책
-        env.put(
-                "KAFKA_AUTO_OFFSET_RESET",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_AUTO_OFFSET_RESET)
-        );
-        // poll interval 상한
-        env.put(
-                "KAFKA_MAX_POLL_INTERVAL_MS",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_MAX_POLL_INTERVAL_MS)
-        );
-        // 세션 타임아웃
-        env.put(
-                "KAFKA_SESSION_TIMEOUT_MS",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_SESSION_TIMEOUT_MS)
-        );
-        // heartbeat 간격
-        env.put(
-                "KAFKA_HEARTBEAT_INTERVAL_MS",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_HEARTBEAT_INTERVAL_MS)
-        );
-        // 배치 크기
-        env.put(
-                "KAFKA_BATCH_SIZE",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_BATCH_SIZE)
-        );
-        // poll 대기 시간
-        env.put(
-                "KAFKA_POLL_TIMEOUT_MS",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_POLL_TIMEOUT_MS)
-        );
-        // 메시지 로그 여부
-        env.put(
-                "KAFKA_LOG_EACH_MESSAGE",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_EACH_MESSAGE)
-        );
-        // 결과 로그 상한
-        env.put(
-                "KAFKA_LOG_RESULT_LIMIT",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_RESULT_LIMIT)
-        );
-        // 응답 재시도 횟수
-        env.put(
-                "KAFKA_RESPONSE_MAX_ATTEMPTS",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RESPONSE_MAX_ATTEMPTS)
-        );
-        // 추천 결과 발행 토픽
-        env.put(
-                "KAFKA_RECOMMENDATION_TOPIC",
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RECOMMENDATION_TOPIC)
-        );
+        if (hasText(mskBootstrapBrokersSaslIam)) {
+            // IAM 브로커 주소
+            env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            // SASL 프로토콜
+            env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+            // SASL 메커니즘
+            env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
+            // AWS 리전 값
+            env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
+            // 분석 요청 토픽
+            env.put(
+                    "KAFKA_ANALYSIS_REQUEST_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_REQUEST_TOPIC)
+            );
+            // 분석 응답 토픽
+            env.put(
+                    "KAFKA_ANALYSIS_RESPONSE_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_RESPONSE_TOPIC)
+            );
+            // 분석 그룹 이름
+            env.put(
+                    "KAFKA_CONSUMER_GROUP_ID",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_GROUP_ID)
+            );
+            // offset 초기 정책
+            env.put(
+                    "KAFKA_AUTO_OFFSET_RESET",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_AUTO_OFFSET_RESET)
+            );
+            // poll interval 상한
+            env.put(
+                    "KAFKA_MAX_POLL_INTERVAL_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_MAX_POLL_INTERVAL_MS)
+            );
+            // 세션 타임아웃
+            env.put(
+                    "KAFKA_SESSION_TIMEOUT_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_SESSION_TIMEOUT_MS)
+            );
+            // heartbeat 간격
+            env.put(
+                    "KAFKA_HEARTBEAT_INTERVAL_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_HEARTBEAT_INTERVAL_MS)
+            );
+            // 배치 크기
+            env.put(
+                    "KAFKA_BATCH_SIZE",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_BATCH_SIZE)
+            );
+            // poll 대기 시간
+            env.put(
+                    "KAFKA_POLL_TIMEOUT_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_POLL_TIMEOUT_MS)
+            );
+            // 메시지 로그 여부
+            env.put(
+                    "KAFKA_LOG_EACH_MESSAGE",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_EACH_MESSAGE)
+            );
+            // 결과 로그 상한
+            env.put(
+                    "KAFKA_LOG_RESULT_LIMIT",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_RESULT_LIMIT)
+            );
+            // 응답 재시도 횟수
+            env.put(
+                    "KAFKA_RESPONSE_MAX_ATTEMPTS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RESPONSE_MAX_ATTEMPTS)
+            );
+            // 추천 결과 발행 토픽
+            env.put(
+                    "KAFKA_RECOMMENDATION_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RECOMMENDATION_TOPIC)
+            );
+        }
         // OpenAI 채팅 모델
         env.put(
                 "OPENAI_CHAT_MODEL",
@@ -717,28 +802,30 @@ public class EcsClusterStack extends Stack {
         env.put("DB_URL", dbUrl);
         // DDL 정책
         env.put("JPA_DDL_AUTO", "validate");
-        // 브로커 주소
-        env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
-        // 보안 프로토콜
-        env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
-        // SASL 메커니즘
-        env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
-        // IAM JAAS 설정
-        env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
-        // IAM 콜백 핸들러
-        env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
-        // 원본 로그 토픽
-        env.put("KAFKA_TOPIC_CLIENT_EVENTS", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
-        // DLQ 토픽
-        env.put("KAFKA_TOPIC_ERROR", ERROR_LOG_TOPIC);
-        // speed group 값
-        env.put("KAFKA_GROUP_SPEED", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID));
-        // poll 크기
-        env.put("KAFKA_MAX_POLL_RECORDS", "1");
-        // DLQ acks 값
-        env.put("KAFKA_DLQ_ACKS", "all");
-        // DLQ retry 값
-        env.put("KAFKA_DLQ_RETRIES", "3");
+        if (hasText(mskBootstrapBrokersSaslIam)) {
+            // 브로커 주소
+            env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
+            // 보안 프로토콜
+            env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
+            // SASL 메커니즘
+            env.put("KAFKA_SASL_MECHANISM", "AWS_MSK_IAM");
+            // IAM JAAS 설정
+            env.put("KAFKA_SASL_JAAS_CONFIG", "software.amazon.msk.auth.iam.IAMLoginModule required;");
+            // IAM 콜백 핸들러
+            env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
+            // 원본 로그 토픽
+            env.put("KAFKA_TOPIC_CLIENT_EVENTS", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
+            // DLQ 토픽
+            env.put("KAFKA_TOPIC_ERROR", ERROR_LOG_TOPIC);
+            // speed group 값
+            env.put("KAFKA_GROUP_SPEED", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_CONSUMER_GROUP_ID));
+            // poll 크기
+            env.put("KAFKA_MAX_POLL_RECORDS", "1");
+            // DLQ acks 값
+            env.put("KAFKA_DLQ_ACKS", "all");
+            // DLQ retry 값
+            env.put("KAFKA_DLQ_RETRIES", "3");
+        }
         return env;
     }
 
@@ -779,13 +866,21 @@ public class EcsClusterStack extends Stack {
     }
 
     private void addIfPresent(List<String> target, String value) {
-        if (value == null) {
+        if (!hasText(value)) {
             return;
         }
         String trimmed = value.trim();
-        if (!trimmed.isEmpty() && !target.contains(trimmed)) {
+        if (!target.contains(trimmed)) {
             target.add(trimmed);
         }
+    }
+
+    private boolean isKafkaEnabled(String mskClusterName, String mskClusterArn, String mskBootstrapBrokersSaslIam) {
+        return hasText(mskClusterName) && hasText(mskClusterArn) && hasText(mskBootstrapBrokersSaslIam);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private String buildSecretArnPattern(String secretName) {
