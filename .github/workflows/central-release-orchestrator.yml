@@ -1233,6 +1233,35 @@ jobs:
           export CUSTOMER_API_IMAGE_TAG
           export RECOMMENDATION_REALTIME_IMAGE_TAG
 
+          msk_cluster_name="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name MskStack \
+            --query "Stacks[0].Outputs[?OutputKey=='MskClusterName'].OutputValue | [0]" \
+            --output text 2>/dev/null || true)"
+          msk_cluster_arn="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name MskStack \
+            --query "Stacks[0].Outputs[?OutputKey=='MskClusterArn'].OutputValue | [0]" \
+            --output text 2>/dev/null || true)"
+          msk_bootstrap_brokers="$(aws cloudformation describe-stacks \
+            --region "$AWS_REGION" \
+            --stack-name MskStack \
+            --query "Stacks[0].Outputs[?OutputKey=='MskBootstrapBrokersSaslIam'].OutputValue | [0]" \
+            --output text 2>/dev/null || true)"
+
+          if [ -z "$msk_cluster_name" ] || [ "$msk_cluster_name" = "None" ] \
+            || [ -z "$msk_cluster_arn" ] || [ "$msk_cluster_arn" = "None" ] \
+            || [ -z "$msk_bootstrap_brokers" ] || [ "$msk_bootstrap_brokers" = "None" ]; then
+            echo "::error::Could not resolve provisioned MSK outputs from MskStack."
+            exit 1
+          fi
+
+          echo "::add-mask::$msk_bootstrap_brokers"
+
+          export ECS_MSK_CLUSTER_NAME_OVERRIDE="$msk_cluster_name"
+          export ECS_MSK_CLUSTER_ARN_OVERRIDE="$msk_cluster_arn"
+          export ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE="$msk_bootstrap_brokers"
+
           {
             echo "admin_web_image_tag=$ADMIN_WEB_IMAGE_TAG"
             echo "admin_api_image_tag=$ADMIN_API_IMAGE_TAG"
