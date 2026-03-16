@@ -36,7 +36,8 @@ import java.util.Map;
  * - 추천 실시간 서비스와 분리된 1회성 Spring Batch 실행
  * - DynamoDB conditional put으로 선점 락 보장
  * - ECS RunTask 완료 및 exit code 검증
- * - 선택적 business validation 후 항상 lock 해제
+ * - 비동기 분석 완료까지 선택적 business validation poll
+ * - 항상 analysis-server scale down 및 lock 해제
  */
 public class OnDemandWorkflowDefinitionBuilder {
 
@@ -81,6 +82,9 @@ public class OnDemandWorkflowDefinitionBuilder {
         Pass markBusinessValidationFailure = businessValidatorFunction == null
                 ? null
                 : marker(scope, "MarkBusinessValidationFailure", "BUSINESS_VALIDATION_FAILED");
+        Pass markBusinessValidationTimeout = businessValidatorFunction == null
+                ? null
+                : marker(scope, "MarkBusinessValidationTimeout", "BUSINESS_VALIDATION_TIMEOUT");
         Pass markSuccess = successMarker(scope);
 
         // 같은 lockKey에 대해 putItem을 선점으로 사용해 동시 실행을 차단한다.
@@ -245,6 +249,15 @@ public class OnDemandWorkflowDefinitionBuilder {
         Choice checkBusinessValidationResult = businessValidatorFunction == null
                 ? null
                 : new Choice(scope, "CheckBusinessValidationResult");
+        Pass initBusinessValidationPollCounter = businessValidatorFunction == null
+                ? null
+                : counterInit(scope, "InitBusinessValidationPollCounter", "$.businessValidationPoll", 1);
+        Wait waitForBusinessValidation = businessValidatorFunction == null
+                ? null
+                : waitSeconds(scope, "WaitForBusinessValidation", config.businessValidationPollSeconds());
+        Pass increaseBusinessValidationPollCounter = businessValidatorFunction == null
+                ? null
+                : counterIncrease(scope, "IncreaseBusinessValidationPollCounter", "$.businessValidationPoll");
 
         LambdaInvoke businessValidation = businessValidatorFunction == null ? null : new LambdaInvoke(
                 scope,
@@ -256,6 +269,7 @@ public class OnDemandWorkflowDefinitionBuilder {
                                 "executionInput.$", "$$.Execution.Input",
                                 "validation", Map.of(
                                         "enabled", config.enableBusinessValidation(),
+                                        "mode", config.businessValidationMode().name(),
                                         "minProcessedCount", config.businessMinProcessedCount(),
                                         "requiredResultFiles", config.businessRequiredResultFiles()
                                 )
@@ -353,13 +367,29 @@ public class OnDemandWorkflowDefinitionBuilder {
 
         if (businessValidation != null) {
             businessValidationNeeded
-                    .when(Condition.booleanEquals("$.config.businessValidationEnabled", true), businessValidation)
+                    .when(Condition.booleanEquals("$.config.businessValidationEnabled", true), initBusinessValidationPollCounter)
                     .otherwise(markSuccess);
 
+            initBusinessValidationPollCounter.next(businessValidation);
             businessValidation.next(checkBusinessValidationResult);
             checkBusinessValidationResult
                     .when(businessValidationPassedCondition(), markSuccess)
+                    .when(businessValidationFailedCondition(), markBusinessValidationFailure)
+                    .when(
+                            Condition.and(
+                                    businessValidationPendingCondition(),
+                                    Condition.numberGreaterThanEquals(
+                                            "$.businessValidationPoll.attempt",
+                                            config.businessValidationMaxAttempts()
+                                    )
+                            ),
+                            markBusinessValidationTimeout
+                    )
+                    .when(businessValidationPendingCondition(), waitForBusinessValidation)
                     .otherwise(markBusinessValidationFailure);
+
+            waitForBusinessValidation.next(increaseBusinessValidationPollCounter);
+            increaseBusinessValidationPollCounter.next(businessValidation);
         }
 
         markSuccess.next(scaleDownAnalysisServer);
@@ -371,6 +401,9 @@ public class OnDemandWorkflowDefinitionBuilder {
         markBatchFailure.next(scaleDownAnalysisServer);
         if (markBusinessValidationFailure != null) {
             markBusinessValidationFailure.next(scaleDownAnalysisServer);
+        }
+        if (markBusinessValidationTimeout != null) {
+            markBusinessValidationTimeout.next(scaleDownAnalysisServer);
         }
         markFailureFromCatch.next(scaleDownAnalysisServer);
 
@@ -426,8 +459,12 @@ public class OnDemandWorkflowDefinitionBuilder {
     }
 
     private static Pass counterInit(Construct scope, String id, String resultPath) {
+        return counterInit(scope, id, resultPath, 0);
+    }
+
+    private static Pass counterInit(Construct scope, String id, String resultPath, int initialAttempt) {
         return new Pass(scope, id, PassProps.builder()
-                .result(Result.fromObject(Map.of("attempt", 0)))
+                .result(Result.fromObject(Map.of("attempt", initialAttempt)))
                 .resultPath(resultPath)
                 .build());
     }
@@ -502,6 +539,14 @@ public class OnDemandWorkflowDefinitionBuilder {
                 Condition.stringEquals("$.businessValidationResult.status", "PASS"),
                 Condition.stringEquals("$.businessValidationResult.status", "SKIP")
         );
+    }
+
+    private static Condition businessValidationPendingCondition() {
+        return Condition.stringEquals("$.businessValidationResult.status", "PENDING");
+    }
+
+    private static Condition businessValidationFailedCondition() {
+        return Condition.stringEquals("$.businessValidationResult.status", "FAIL");
     }
 
     private static List<Object> workerEnvironmentOverrides(OnDemandWorkflowConfig config) {

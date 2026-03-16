@@ -191,11 +191,21 @@ public class NetworkStack extends Stack {
                 Port.tcp(MSK_IAM_PORT),
                 "To MSK IAM only"
         );
+        recommendationRealtimeSg.addEgressRule(
+                Peer.securityGroupId(dbSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "To DB only"
+        );
 
         kafkaBrokerSg.addIngressRule(
                 Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
                 "From Recommendation Realtime only"
+        );
+        dbSg.addIngressRule(
+                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "Recommendation Realtime to DB"
         );
         recommendationRealtimeSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
@@ -246,6 +256,11 @@ public class NetworkStack extends Stack {
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(analysisServerPort),
                 "From readiness probe/admin API only"
+        );
+        analysisServerSg.addEgressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "To Admin API only"
         );
 
 
@@ -315,6 +330,11 @@ public class NetworkStack extends Stack {
                 Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
                 Port.tcp(analysisServerPort),
                 "To Analysis Server only"
+        );
+        adminApiSg.addIngressRule(
+                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "From Analysis Server only"
         );
 
         dbSg.addIngressRule(

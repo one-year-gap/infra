@@ -188,10 +188,32 @@ class EcsClusterStackTest {
 
         String recommendationRealtimeTaskDefinitionJson = findTaskDefinitionByAppMode(taskDefinitions, "realtime").toString();
         org.assertj.core.api.Assertions.assertThat(recommendationRealtimeTaskDefinitionJson)
+                .contains("KAFKA_BOOTSTRAP_SERVERS")
+                .contains("MSK_BOOTSTRAP_SERVERS")
+                .contains("b-1.test.holliverse-msk.c2.kafka.ap-northeast-2.amazonaws.com:9098")
+                .contains("KAFKA_SECURITY_PROTOCOL")
+                .contains("SASL_SSL")
+                .contains("KAFKA_SASL_MECHANISM")
+                .contains("OAUTHBEARER")
+                .contains("KAFKA_RECOMMENDATION_TOPIC")
+                .contains("recommendation-topic")
+                .contains("/bin/sh")
+                .contains("-lc")
+                .contains("build_kafka_client_options")
+                .contains("recommendation_service.py")
+                .contains("docker-entrypoint.sh")
                 .contains("OPENAI_CHAT_MODEL")
                 .contains("gpt-4o-mini")
                 .contains("OPENAI_EMBEDDING_MODEL")
                 .contains("text-embedding-3-small")
+                .contains("ADMIN_API_BASE_URL")
+                .contains("http://admin-api.example.internal:8080")
+                .contains("OPENAI_API_KEY");
+
+        String analysisServerTaskDefinitionJson = findTaskDefinitionByAppMode(taskDefinitions, "analysis-server").toString();
+        org.assertj.core.api.Assertions.assertThat(analysisServerTaskDefinitionJson)
+                .contains("ADMIN_API_BASE_URL")
+                .contains("http://admin-api.example.internal:8080")
                 .contains("OPENAI_API_KEY");
     }
 

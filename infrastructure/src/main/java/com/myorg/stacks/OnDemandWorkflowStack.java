@@ -88,8 +88,8 @@ public class OnDemandWorkflowStack extends Stack {
                 "AnalysisServerProbeFunction",
                 config.analysisServerReadinessConfig(),
                 workflowVpc,
-                importSubnets(config.analysisServerReadinessConfig().probeSubnetIds()),
-                importSecurityGroups(config.analysisServerReadinessConfig().probeSecurityGroupIds())
+                importSubnets("AnalysisServerProbeSubnet", config.analysisServerReadinessConfig().probeSubnetIds()),
+                importSecurityGroups("AnalysisServerProbeSecurityGroup", config.analysisServerReadinessConfig().probeSecurityGroupIds())
         );
 
         // 검증 로직은 배치 종료 후 선택적으로만 사용한다.
@@ -98,7 +98,10 @@ public class OnDemandWorkflowStack extends Stack {
             businessValidatorFunction = OnDemandSupportFunctionFactory.createBusinessValidator(
                     this,
                     "BusinessValidatorFunction",
-                    config
+                    config,
+                    workflowVpc,
+                    importSubnets("BusinessValidatorSubnet", resources.workerConfig().workerSubnetIds()),
+                    importSecurityGroups("BusinessValidatorSecurityGroup", resources.workerConfig().workerSecurityGroupIds())
             );
         }
 
@@ -213,20 +216,20 @@ public class OnDemandWorkflowStack extends Stack {
                 .build());
     }
 
-    private List<ISubnet> importSubnets(List<String> subnetIds) {
+    private List<ISubnet> importSubnets(String idPrefix, List<String> subnetIds) {
         List<ISubnet> subnets = new ArrayList<>();
         for (int i = 0; i < subnetIds.size(); i++) {
-            subnets.add(Subnet.fromSubnetId(this, "ImportedAnalysisServerProbeSubnet" + i, subnetIds.get(i)));
+            subnets.add(Subnet.fromSubnetId(this, "Imported" + idPrefix + i, subnetIds.get(i)));
         }
         return subnets;
     }
 
-    private List<ISecurityGroup> importSecurityGroups(List<String> securityGroupIds) {
+    private List<ISecurityGroup> importSecurityGroups(String idPrefix, List<String> securityGroupIds) {
         List<ISecurityGroup> securityGroups = new ArrayList<>();
         for (int i = 0; i < securityGroupIds.size(); i++) {
             securityGroups.add(SecurityGroup.fromSecurityGroupId(
                     this,
-                    "ImportedAnalysisServerProbeSecurityGroup" + i,
+                    "Imported" + idPrefix + i,
                     securityGroupIds.get(i)
             ));
         }
