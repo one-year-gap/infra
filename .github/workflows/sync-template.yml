@@ -22,7 +22,7 @@ jobs:
           script: |
             const fs = require('fs');
 
-            const targetRepos = ['api-server','counselor-fe','admin-fe','customer-fe','worker','counseling-analytics'];
+            const targetRepos = ['api-server','counselor-fe','admin-fe','customer-fe','worker','intelligence-server'];
             const targetBranch = 'dev';
 
             // --- source templates (central repo) ---
@@ -87,4 +87,3 @@ jobs:
                 return undefined;
               }
             }
-

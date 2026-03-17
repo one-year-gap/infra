@@ -34,7 +34,10 @@ public record AnalysisServerReadinessConfig(
                         AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_UP_DESIRED_COUNT.key(), "1")
                 ),
                 parseScaleDownDesiredCount(
-                        AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT.key(), "0")
+                        AppConfig.getOptionalValueOrDefault(
+                                EnvKey.ON_DEMAND_ANALYSIS_SERVER_SCALE_DOWN_DESIRED_COUNT.key(),
+                                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT)
+                        )
                 ),
                 AppConfig.getRequiredValue(EnvKey.ON_DEMAND_ANALYSIS_SERVER_PROBE_VPC_ID.key()),
                 parseRequiredCsv(

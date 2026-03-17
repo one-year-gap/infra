@@ -174,13 +174,16 @@ env:
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
   WORKER_SOURCE_REPO: one-year-gap/worker
-  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/counseling-analytics
+  INTELLIGENCE_SERVER_SOURCE_REPO: one-year-gap/intelligence-server
+  # Legacy alias kept because build/deploy job names and variables still use counseling-analytics naming.
+  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/intelligence-server
 
 jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
-      source_repo_code: ${{ steps.resolve.outputs.source_repo_code }}
+      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
       release_level: ${{ steps.resolve.outputs.release_level }}
@@ -234,18 +237,7 @@ jobs:
                 .filter(Boolean);
             }
 
-            function canonicalSourceRepoName(repoName) {
-              if (repoName === "counseling-analytics" || repoName === "intelligence-server") {
-                return "counseling-analytics";
-              }
-              return repoName;
-            }
-
-            function resolveTagNamespace(repoName, deployLabels) {
-              if (repoName !== "counseling-analytics") {
-                return "";
-              }
-
+            function getIntelligenceNamespaceState(deployLabels) {
               const hasLegacyNamespace = deployLabels.includes("deploy:counseling-analytics");
               const hasRecommendationNamespace = deployLabels.some(label =>
                 label === "deploy:recommendation-server" || label === "deploy:recommendation-realtime"
@@ -253,44 +245,94 @@ jobs:
               const hasAnalysisNamespace = deployLabels.some(label =>
                 label === "deploy:analysis-server" || label === "deploy:counseling-batch"
               );
-
-              const namespaceCount = [
+              return {
                 hasLegacyNamespace,
                 hasRecommendationNamespace,
-                hasAnalysisNamespace,
-              ].filter(Boolean).length;
+                hasAnalysisNamespace
+              };
+            }
 
-              if (namespaceCount !== 1) {
-                throw new Error(
-                  "counseling-analytics release must resolve to exactly one namespace. " +
-                    "use one of deploy:analysis-server/deploy:counseling-batch, " +
-                    "deploy:recommendation-server/deploy:recommendation-realtime, or deploy:counseling-analytics"
-                );
+            function resolveCanonicalSourceRepoName(repoName, deployLabels) {
+              const namespaceState = getIntelligenceNamespaceState(deployLabels);
+
+              switch (repoName) {
+                case "recommendation-server":
+                  if (
+                    !namespaceState.hasRecommendationNamespace ||
+                    namespaceState.hasLegacyNamespace ||
+                    namespaceState.hasAnalysisNamespace
+                  ) {
+                    throw new Error(
+                      "recommendation-server source repo hint requires recommendation-server/recommendation-realtime deploy labels only"
+                    );
+                  }
+                  return "intelligence-server";
+                case "analysis-server":
+                  if (
+                    !namespaceState.hasAnalysisNamespace ||
+                    namespaceState.hasLegacyNamespace ||
+                    namespaceState.hasRecommendationNamespace
+                  ) {
+                    throw new Error(
+                      "analysis-server source repo hint requires analysis-server/counseling-batch deploy labels only"
+                    );
+                  }
+                  return "intelligence-server";
+                case "counseling-analytics":
+                case "intelligence-server": {
+                  const namespaceCount = [
+                    namespaceState.hasLegacyNamespace,
+                    namespaceState.hasRecommendationNamespace,
+                    namespaceState.hasAnalysisNamespace,
+                  ].filter(Boolean).length;
+
+                  if (namespaceCount !== 1) {
+                    throw new Error(
+                      "intelligence-server release must resolve to exactly one namespace. " +
+                        "use one of deploy:analysis-server/deploy:counseling-batch, " +
+                        "deploy:recommendation-server/deploy:recommendation-realtime, or deploy:counseling-analytics"
+                    );
+                  }
+
+                  if (namespaceState.hasRecommendationNamespace) {
+                    return "intelligence-server";
+                  }
+                  if (namespaceState.hasAnalysisNamespace) {
+                    return "intelligence-server";
+                  }
+                  return "intelligence-server";
+                }
+                default:
+                  return repoName;
+              }
+            }
+
+            function resolveTagNamespace(repoName, deployLabels) {
+              if (repoName !== "intelligence-server") {
+                return "";
               }
 
-              if (hasRecommendationNamespace) {
+              const namespaceState = getIntelligenceNamespaceState(deployLabels);
+              if (namespaceState.hasRecommendationNamespace) {
                 return "recommendation-server";
               }
-              if (hasAnalysisNamespace) {
+              if (namespaceState.hasAnalysisNamespace) {
                 return "analysis-server";
               }
               return "counseling-analytics";
             }
 
-            function resolveSourceRepoCode(repoName) {
-              switch (repoName) {
-                case "api-server":
-                  return "repo1";
-                case "admin-fe":
-                  return "repo2";
-                case "worker":
-                  return "repo3";
-                case "counseling-analytics":
-                case "intelligence-server":
-                  return "repo4";
-                default:
-                  throw new Error(`unsupported source repo name: ${repoName}`);
-              }
+            function resolveConfiguredSourceRepo(repoName, fallbackFull = "") {
+              const repoMap = {
+                "api-server": process.env.API_SERVER_SOURCE_REPO,
+                "admin-fe": process.env.ADMIN_WEB_SOURCE_REPO,
+                "worker": process.env.WORKER_SOURCE_REPO,
+                "recommendation-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
+                "analysis-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
+                "counseling-analytics": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
+                "intelligence-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO
+              };
+              return String(repoMap[repoName] || fallbackFull || "").trim();
             }
 
             let sourceRepo;
@@ -333,7 +375,7 @@ jobs:
                 process.env.API_SERVER_SOURCE_REPO,
                 process.env.ADMIN_WEB_SOURCE_REPO,
                 process.env.WORKER_SOURCE_REPO,
-                process.env.COUNSELING_ANALYTICS_SOURCE_REPO
+                process.env.INTELLIGENCE_SERVER_SOURCE_REPO
               ].filter(Boolean).map(v => String(v).trim())));
 
               let matchedRepo = null;
@@ -414,11 +456,16 @@ jobs:
             }
 
             const releaseLevel = releaseLabel.replace("release:", "");
-            const sourceRepoKey = canonicalSourceRepoName(repo);
-            const sourceRepoCode = resolveSourceRepoCode(sourceRepoKey);
+            const sourceRepoKey = resolveCanonicalSourceRepoName(repo, deployLabels);
+            const resolvedSourceRepo = resolveConfiguredSourceRepo(sourceRepoKey, full);
             const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
 
-            core.setOutput("source_repo_code", sourceRepoCode);
+            if (!resolvedSourceRepo) {
+              throw new Error(`failed to resolve source repo path for repo=${sourceRepoKey}`);
+            }
+
+            core.setOutput("source_repo",      resolvedSourceRepo);
+            core.setOutput("source_repo_name", sourceRepoKey);
             core.setOutput("source_sha",        sourceSha || "");
             core.setOutput("release_label",     releaseLabel);
             core.setOutput("release_level",     releaseLevel);
@@ -459,7 +506,7 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_code != ''
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
@@ -468,24 +515,10 @@ jobs:
         id: guard-source
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
-          ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
-          WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
-          COUNSELING_ANALYTICS_SOURCE_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          case "${SOURCE_REPO_CODE}" in
-            repo1) SOURCE_REPO="${API_SERVER_SOURCE_REPO}" ;;
-            repo2) SOURCE_REPO="${ADMIN_WEB_SOURCE_REPO}" ;;
-            repo3) SOURCE_REPO="${WORKER_SOURCE_REPO}" ;;
-            repo4) SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO}" ;;
-            *)
-              echo "::error::resolve-context output source_repo_code is invalid. source_repo_code=${SOURCE_REPO_CODE}"
-              exit 1
-              ;;
-          esac
           if [ -z "${SOURCE_REPO}" ] || [[ "${SOURCE_REPO}" != */* ]]; then
             echo "::error::resolve-context output source_repo is empty/invalid. Aborting to prevent checkout fallback to current repo."
             exit 1
@@ -618,11 +651,7 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO_CODE:   ${{ needs.resolve-context.outputs.source_repo_code }}
-          API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
-          ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
-          WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
-          COUNSELING_ANALYTICS_SOURCE_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
+          SOURCE_REPO:        ${{ needs.resolve-context.outputs.source_repo }}
           VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
@@ -639,23 +668,7 @@ jobs:
           retries: 3
           script: |
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-            const sourceRepoSelector = String(
-              process.env.SOURCE_REPO_CODE ||
-              process.env.SOURCE_REPO_KEY ||
-              process.env.SOURCE_REPO_NAME ||
-              ""
-            ).trim();
-            const sourceRepoMap = {
-              repo1: process.env.API_SERVER_SOURCE_REPO,
-              "api-server": process.env.API_SERVER_SOURCE_REPO,
-              repo2: process.env.ADMIN_WEB_SOURCE_REPO,
-              "admin-web": process.env.ADMIN_WEB_SOURCE_REPO,
-              repo3: process.env.WORKER_SOURCE_REPO,
-              worker: process.env.WORKER_SOURCE_REPO,
-              repo4: process.env.COUNSELING_ANALYTICS_SOURCE_REPO,
-              "counseling-analytics": process.env.COUNSELING_ANALYTICS_SOURCE_REPO
-            };
-            const sourceRepoRaw  = String(sourceRepoMap[sourceRepoSelector] || "").trim();
+            const sourceRepoRaw  = String(process.env.SOURCE_REPO || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
             const tag            = process.env.VERSION_TAG;
             const targetSha      = process.env.TARGET_SHA;
@@ -671,7 +684,7 @@ jobs:
             if (String(process.env.DEPLOY_COUNSELING_BATCH) === "true") deployLabels.push("deploy:counseling-batch");
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo. source_repo_selector=${sourceRepoSelector}, resolved=${sourceRepoRaw}`);
+              throw new Error(`invalid source repo. resolved=${sourceRepoRaw}`);
             }
 
             try {
@@ -689,7 +702,7 @@ jobs:
               `deploy-labels: ${deployLabels.join(", ") || "none"}`
             ].join("\n");
 
-            const createReleasePayload = {
+            const baseCreateReleasePayload = {
               owner,
               repo,
               tag_name:         tag,
@@ -697,38 +710,60 @@ jobs:
               name:             `${tag}`,
               body:             header,
               draft:            false,
-              prerelease:       false,
-              generate_release_notes: true
+              prerelease:       false
             };
 
-            let created = null;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              try {
-                created = await github.rest.repos.createRelease(createReleasePayload);
-                break;
-              } catch (e) {
-                const message = String(e.message || "");
-                const shouldRetry =
-                  (typeof e.status === "number" && e.status >= 500) ||
-                  /fetch failed|ECONNRESET|socket hang up|timed out/i.test(message);
-
+            async function createReleaseWithRetries(payload, modeLabel) {
+              for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                  const existingAfterFailure = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-                  core.notice(`Release became available after createRelease error: ${existingAfterFailure.data.html_url}`);
-                  return;
-                } catch (lookupError) {
-                  if (lookupError.status !== 404) {
-                    core.warning(`getReleaseByTag after failure also failed: ${lookupError.message}`);
+                  return await github.rest.repos.createRelease(payload);
+                } catch (e) {
+                  const message = String(e.message || "");
+                  const shouldRetry =
+                    (typeof e.status === "number" && e.status >= 500) ||
+                    /fetch failed|ECONNRESET|socket hang up|timed out/i.test(message);
+
+                  try {
+                    const existingAfterFailure = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+                    core.notice(`Release became available after createRelease error (${modeLabel}): ${existingAfterFailure.data.html_url}`);
+                    return existingAfterFailure;
+                  } catch (lookupError) {
+                    if (lookupError.status !== 404) {
+                      core.warning(`getReleaseByTag after failure (${modeLabel}) also failed: ${lookupError.message}`);
+                    }
                   }
-                }
 
-                if (!shouldRetry || attempt === 3) {
-                  throw e;
-                }
+                  if (!shouldRetry || attempt === 3) {
+                    throw e;
+                  }
 
-                core.warning(`createRelease attempt ${attempt} failed: ${message}. Retrying...`);
-                await sleep(attempt * 2000);
+                  core.warning(`createRelease attempt ${attempt} failed (${modeLabel}): ${message}. Retrying...`);
+                  await sleep(attempt * 2000);
+                }
               }
+            }
+
+            let created = null;
+            try {
+              created = await createReleaseWithRetries(
+                {
+                  ...baseCreateReleasePayload,
+                  generate_release_notes: true
+                },
+                "with generated notes"
+              );
+            } catch (e) {
+              const message = String(e.message || "");
+              const canFallback =
+                (typeof e.status === "number" && e.status >= 500) ||
+                /fetch failed|ECONNRESET|socket hang up|timed out/i.test(message);
+
+              if (!canFallback) {
+                throw e;
+              }
+
+              core.warning(`createRelease with generated notes failed after retries: ${message}. Falling back to plain release body.`);
+              created = await createReleaseWithRetries(baseCreateReleasePayload, "without generated notes");
             }
 
             core.info(`Created release: ${created.data.html_url}`);
@@ -755,16 +790,9 @@ jobs:
       - name: Resolve api-server source repository
         id: resolve-api-repo
         shell: bash
-        env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          else
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          fi
+          echo "repo=${API_SERVER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout api-server
         uses: actions/checkout@v4
@@ -777,11 +805,12 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo1" ]]; then
+          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -872,16 +901,9 @@ jobs:
       - name: Resolve admin-web source repository
         id: resolve-admin-repo
         shell: bash
-        env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          else
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          fi
+          echo "repo=${ADMIN_WEB_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout admin-web
         uses: actions/checkout@v4
@@ -894,11 +916,12 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo2" ]]; then
+          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -951,16 +974,9 @@ jobs:
       - name: Resolve worker source repository
         id: resolve-worker-repo
         shell: bash
-        env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          else
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          fi
+          echo "repo=${WORKER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout worker
         uses: actions/checkout@v4
@@ -973,11 +989,12 @@ jobs:
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo3" ]]; then
+          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
@@ -1035,36 +1052,37 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve counseling analytics source repository
-        id: resolve-counseling-repo
+      - name: Resolve intelligence source repository
+        id: resolve-intelligence-repo
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
-          DEFAULT_REPO: ${{ env.COUNSELING_ANALYTICS_SOURCE_REPO }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
+          INTELLIGENCE_SERVER_SOURCE_REPO: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
-          else
-            echo "repo=$DEFAULT_REPO" >> "$GITHUB_OUTPUT"
+          if [[ "${SOURCE_REPO}" != "${INTELLIGENCE_SERVER_SOURCE_REPO}" ]]; then
+            echo "::error::Unsupported intelligence source repo: ${SOURCE_REPO}"
+            exit 1
           fi
+          echo "repo=${INTELLIGENCE_SERVER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout counseling analytics
+      - name: Checkout intelligence source
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-counseling-repo.outputs.repo }}
+          repository: ${{ steps.resolve-intelligence-repo.outputs.repo }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
-      - name: Checkout source sha if source repo is counseling-analytics
+      - name: Checkout source sha if source repo matches intelligence checkout
         if: needs.resolve-context.outputs.source_sha != ''
         shell: bash
         env:
-          SOURCE_REPO_CODE: ${{ needs.resolve-context.outputs.source_repo_code }}
+          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          CHECKOUT_REPO: ${{ steps.resolve-intelligence-repo.outputs.repo }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO_CODE}" == "repo4" ]]; then
+          if [[ "${SOURCE_REPO}" == "${CHECKOUT_REPO}" ]]; then
             git checkout "$SOURCE_SHA"
           fi
 
