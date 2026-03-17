@@ -36,6 +36,7 @@ public record FargateBackgroundServiceProps(
         boolean enableEcsExec,
 
         Map<String, String> environment,
+        List<String> entryPoint,
         List<String> command,
         Integer containerPort,
 

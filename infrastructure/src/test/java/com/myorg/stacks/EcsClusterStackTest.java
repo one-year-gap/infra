@@ -168,7 +168,53 @@ class EcsClusterStackTest {
                 .contains("click-log-consumer")
                 .contains("KAFKA_TOPIC_CLIENT_EVENTS")
                 .contains("error-logs")
-                .contains("DB_URL");
+                .contains("DB_URL")
+                .contains("KAFKA_MAX_POLL_INTERVAL_MS")
+                .contains("1800000")
+                .contains("KAFKA_SESSION_TIMEOUT_MS")
+                .contains("60000")
+                .contains("KAFKA_HEARTBEAT_INTERVAL_MS")
+                .contains("15000")
+                .contains("OPENAI_CHAT_MODEL")
+                .contains("gpt-4o-mini")
+                .contains("OPENAI_EMBEDDING_MODEL")
+                .contains("text-embedding-3-small")
+                .contains("KAFKA_RECOMMENDATION_TOPIC")
+                .contains("recommendation-topic")
+                .contains("RECOMMEND_TOP_K")
+                .contains("CACHE_TTL_DAYS")
+                .contains("POSTGRES_DSN")
+                .contains("OPENAI_API_KEY");
+
+        String recommendationRealtimeTaskDefinitionJson = findTaskDefinitionByAppMode(taskDefinitions, "realtime").toString();
+        org.assertj.core.api.Assertions.assertThat(recommendationRealtimeTaskDefinitionJson)
+                .contains("KAFKA_BOOTSTRAP_SERVERS")
+                .contains("MSK_BOOTSTRAP_SERVERS")
+                .contains("b-1.test.holliverse-msk.c2.kafka.ap-northeast-2.amazonaws.com:9098")
+                .contains("KAFKA_SECURITY_PROTOCOL")
+                .contains("SASL_SSL")
+                .contains("KAFKA_SASL_MECHANISM")
+                .contains("OAUTHBEARER")
+                .contains("KAFKA_RECOMMENDATION_TOPIC")
+                .contains("recommendation-topic")
+                .contains("/bin/sh")
+                .contains("-lc")
+                .contains("build_kafka_client_options")
+                .contains("recommendation_service.py")
+                .contains("docker-entrypoint.sh")
+                .contains("OPENAI_CHAT_MODEL")
+                .contains("gpt-4o-mini")
+                .contains("OPENAI_EMBEDDING_MODEL")
+                .contains("text-embedding-3-small")
+                .contains("ADMIN_API_BASE_URL")
+                .contains("http://admin-api.example.internal:8080")
+                .contains("OPENAI_API_KEY");
+
+        String analysisServerTaskDefinitionJson = findTaskDefinitionByAppMode(taskDefinitions, "analysis-server").toString();
+        org.assertj.core.api.Assertions.assertThat(analysisServerTaskDefinitionJson)
+                .contains("ADMIN_API_BASE_URL")
+                .contains("http://admin-api.example.internal:8080")
+                .contains("OPENAI_API_KEY");
     }
 
     @SuppressWarnings("unchecked")
@@ -177,5 +223,35 @@ class EcsClusterStackTest {
                 .map(resource -> (Map<String, Object>) resource.get("Properties"))
                 .filter(properties -> Boolean.valueOf(enabled).equals(properties.get("EnableExecuteCommand")))
                 .count();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> findTaskDefinitionByAppMode(
+            Map<String, Map<String, Object>> taskDefinitions,
+            String appMode
+    ) {
+        return taskDefinitions.values().stream()
+                .map(resource -> (Map<String, Object>) resource.get("Properties"))
+                .filter(properties -> hasAppMode(properties, appMode))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("TaskDefinition with APP_MODE=" + appMode + " not found"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean hasAppMode(Map<String, Object> taskDefinitionProperties, String appMode) {
+        List<Map<String, Object>> containerDefinitions =
+                (List<Map<String, Object>>) taskDefinitionProperties.get("ContainerDefinitions");
+        if (containerDefinitions == null || containerDefinitions.isEmpty()) {
+            return false;
+        }
+
+        List<Map<String, Object>> environment =
+                (List<Map<String, Object>>) containerDefinitions.get(0).get("Environment");
+        if (environment == null) {
+            return false;
+        }
+
+        return environment.stream().anyMatch(variable ->
+                "APP_MODE".equals(variable.get("Name")) && appMode.equals(variable.get("Value")));
     }
 }

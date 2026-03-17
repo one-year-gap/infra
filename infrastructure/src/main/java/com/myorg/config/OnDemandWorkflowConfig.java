@@ -16,8 +16,13 @@ public record OnDemandWorkflowConfig(
 
         String expectedReleaseTag,
 
+        BusinessValidationMode businessValidationMode,
+        int businessValidationPollSeconds,
+        int businessValidationMaxAttempts,
         int businessMinProcessedCount,
         String businessRequiredResultFilesCsv,
+        String businessValidatorDbSecretId,
+        String businessValidatorDbName,
 
         boolean enableBusinessValidation,
 
@@ -40,8 +45,24 @@ public record OnDemandWorkflowConfig(
                 AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_EXPECTED_RELEASE_TAG.key(), ""),
 
                 // 배치 종료 후 선택 검증
+                BusinessValidationMode.fromEnv(
+                        AppConfig.getOptionalValueOrDefault(
+                                EnvKey.ON_DEMAND_BUSINESS_VALIDATION_MODE.key(),
+                                EnvKey.ON_DEMAND_BUSINESS_VALIDATION_MODE.getDefaultValue()
+                        )
+                ),
+                parsePositiveInt(EnvKey.ON_DEMAND_BUSINESS_VALIDATION_POLL_SECONDS),
+                parsePositiveInt(EnvKey.ON_DEMAND_BUSINESS_VALIDATION_MAX_ATTEMPTS),
                 Integer.parseInt(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_MIN_PROCESSED_COUNT.key(), "0")),
                 AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_BUSINESS_REQUIRED_RESULT_FILES.key(), ""),
+                AppConfig.getOptionalValueOrDefault(
+                        EnvKey.ON_DEMAND_BUSINESS_VALIDATOR_DB_SECRET_ID.key(),
+                        EnvKey.ON_DEMAND_BUSINESS_VALIDATOR_DB_SECRET_ID.getDefaultValue()
+                ),
+                AppConfig.getOptionalValueOrDefault(
+                        EnvKey.ON_DEMAND_BUSINESS_VALIDATOR_DB_NAME.key(),
+                        EnvKey.ON_DEMAND_BUSINESS_VALIDATOR_DB_NAME.getDefaultValue()
+                ),
                 Boolean.parseBoolean(AppConfig.getOptionalValueOrDefault(EnvKey.ON_DEMAND_ENABLE_BUSINESS_VALIDATION.key(), "false")),
 
                 AnalysisServerReadinessConfig.fromEnv(),
@@ -55,8 +76,20 @@ public record OnDemandWorkflowConfig(
         return expectedReleaseTag != null && !expectedReleaseTag.isBlank();
     }
 
+    public boolean usesOutboxRequestCountValidation() {
+        return businessValidationMode == BusinessValidationMode.OUTBOX_REQUEST_COUNTS;
+    }
+
     public List<String> businessRequiredResultFiles() {
         return splitCsv(businessRequiredResultFilesCsv);
+    }
+
+    private static int parsePositiveInt(EnvKey key) {
+        int parsed = Integer.parseInt(AppConfig.getOptionalValueOrDefault(key.key(), key.getDefaultValue()));
+        if (parsed <= 0) {
+            throw new IllegalStateException(key.key() + " 값은 1 이상이어야 합니다.");
+        }
+        return parsed;
     }
 
     private static List<String> splitCsv(String csv) {

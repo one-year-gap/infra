@@ -10,6 +10,7 @@ set -euo pipefail
 REGION="__REGION__"
 DB_SECRET_ID="__DBSECRETID__"
 RECREATE_CORE_CONTAINERS="${RECREATE_CORE_CONTAINERS:-false}"
+RECREATE_KAFKA_UI="${RECREATE_KAFKA_UI:-false}"
 RECREATE_LOKI_STACK="${RECREATE_LOKI_STACK:-false}"
 ENABLE_LOKI_STACK="${ENABLE_LOKI_STACK:-true}"
 ENABLE_ALLOY="${ENABLE_ALLOY:-true}"
@@ -81,6 +82,26 @@ ensure_started_or_run "__PROMETHEUSCONTAINERNAME__" \
   -p 127.0.0.1:__PROMETHEUSPORT__:9090 \
   -v __PROMETHEUSCONFIGPATH__:/etc/prometheus/prometheus.yml:ro \
   __PROMETHEUSIMAGE__
+
+if [ "$RECREATE_KAFKA_UI" = "true" ]; then
+  docker rm -f __KAFKAUICONTAINERNAME__ >/dev/null 2>&1 || true
+fi
+
+ensure_started_or_run "__KAFKAUICONTAINERNAME__" \
+  --restart unless-stopped \
+  --network __DOCKERNETWORKNAME__ \
+  --log-opt max-size=50m --log-opt max-file=5 \
+  -p 127.0.0.1:__KAFKAUIPORT__:8080 \
+  -e AWS_REGION=__REGION__ \
+  -e DYNAMIC_CONFIG_ENABLED=false \
+  -e KAFKA_CLUSTERS_0_NAME=__KAFKAUICLUSTERNAME__ \
+  -e KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=__MSKBOOTSTRAPBROKERSSASLIAM__ \
+  -e KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL=SASL_SSL \
+  -e KAFKA_CLUSTERS_0_PROPERTIES_SASL_MECHANISM=AWS_MSK_IAM \
+  -e 'KAFKA_CLUSTERS_0_PROPERTIES_SASL_JAAS_CONFIG=software.amazon.msk.auth.iam.IAMLoginModule required;' \
+  -e KAFKA_CLUSTERS_0_PROPERTIES_SASL_CLIENT_CALLBACK_HANDLER_CLASS=software.amazon.msk.auth.iam.IAMClientCallbackHandler \
+  -e KAFKA_CLUSTERS_0_PROPERTIES_CLIENT_DNS_LOOKUP=use_all_dns_ips \
+  __KAFKAUIIMAGE__
 
 if [ "$ENABLE_LOKI_STACK" != "true" ]; then
   echo "[INFO] ENABLE_LOKI_STACK=false -> skip Loki/Alloy bootstrap"

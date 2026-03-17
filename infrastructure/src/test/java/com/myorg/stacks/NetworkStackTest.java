@@ -288,6 +288,13 @@ class NetworkStackTest {
         }
 
         @Test
+        @DisplayName("DB(5432) 아웃바운드를 DB SG로만 허용한다")
+        void shouldAllowDbOutboundToDbSecurityGroupOnly() {
+            assertEgressToSecurityGroup(recommendationRealtimeSgLogicalId, dbSgLogicalId, 5432);
+            assertNoEgressCidrOnPort(recommendationRealtimeSgLogicalId, "tcp", 5432);
+        }
+
+        @Test
         @DisplayName("Admin API에서만 recommendation 포트 인바운드를 허용한다")
         void shouldAllowInboundFromAdminApiOnly() {
             assertIngressFromSecurityGroup(recommendationRealtimeSgLogicalId, adminApiSgLogicalId, RECOMMENDATION_REALTIME_PORT);
@@ -320,6 +327,12 @@ class NetworkStackTest {
         @DisplayName("Admin API에서만 analysis-server 포트 인바운드를 허용한다")
         void shouldAllowInboundFromAdminApiOnly() {
             assertIngressFromSecurityGroup(analysisServerSgLogicalId, adminApiSgLogicalId, ANALYSIS_SERVER_PORT);
+        }
+
+        @Test
+        @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToAdminApi() {
+            assertEgressToSecurityGroup(analysisServerSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
         }
     }
 
@@ -429,7 +442,7 @@ class NetworkStackTest {
         }
 
         @Test
-        @DisplayName("Analysis Server 포트로 아웃바운드를 허용한다")
+        @DisplayName("온디맨드 readiness probe를 위해 Analysis Server 포트로 아웃바운드를 허용한다")
         void shouldAllowOutboundToAnalysisServer() {
             assertEgressToSecurityGroup(adminApiSgLogicalId, analysisServerSgLogicalId, ANALYSIS_SERVER_PORT);
         }
@@ -439,6 +452,12 @@ class NetworkStackTest {
         void shouldAllowInboundFromRecommendationRealtime() {
             assertIngressFromSecurityGroup(adminApiSgLogicalId, recommendationRealtimeSgLogicalId, ADMIN_SERVER_PORT);
         }
+
+        @Test
+        @DisplayName("Analysis Server에서 adminServerPort 인바운드를 허용한다")
+        void shouldAllowInboundFromAnalysisServer() {
+            assertIngressFromSecurityGroup(adminApiSgLogicalId, analysisServerSgLogicalId, ADMIN_SERVER_PORT);
+        }
     }
 
     @Nested
@@ -446,19 +465,25 @@ class NetworkStackTest {
     class DatabaseSgTest {
 
         @Test
-        @DisplayName("Customer API에서만 DB 5432 인바운드를 허용한다")
+        @DisplayName("Customer API에서 DB 5432 인바운드를 허용한다")
         void shouldAllowInboundFromCustomerApiOnly() {
             assertIngressFromSecurityGroup(dbSgLogicalId, customerApiSgLogicalId, 5432);
         }
 
         @Test
-        @DisplayName("Admin API에서만 DB 5432 인바운드를 허용한다")
+        @DisplayName("Admin API에서 DB 5432 인바운드를 허용한다")
         void shouldAllowInboundFromAdminApiOnly() {
             assertIngressFromSecurityGroup(dbSgLogicalId, adminApiSgLogicalId, 5432);
         }
 
         @Test
-        @DisplayName("Analysis Server에서만 DB 5432 인바운드를 허용한다")
+        @DisplayName("Recommendation Realtime에서 DB 5432 인바운드를 허용한다")
+        void shouldAllowInboundFromRecommendationRealtimeOnly() {
+            assertIngressFromSecurityGroup(dbSgLogicalId, recommendationRealtimeSgLogicalId, 5432);
+        }
+
+        @Test
+        @DisplayName("Analysis Server에서 DB 5432 인바운드를 허용한다")
         void shouldAllowInboundFromAnalysisServerOnly() {
             assertIngressFromSecurityGroup(dbSgLogicalId, analysisServerSgLogicalId, 5432);
         }

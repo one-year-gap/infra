@@ -120,8 +120,7 @@ public class InfrastructureApp {
      */
     private static void deployEcs(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
-        createEcsClusterStack(context, baseStacks, mskStack);
+        createEcsClusterStack(context, baseStacks);
     }
 
     /**
@@ -129,8 +128,7 @@ public class InfrastructureApp {
      */
     private static void deployAlb(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
     }
@@ -140,8 +138,7 @@ public class InfrastructureApp {
      */
     private static void deployAlbWaf(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
     }
@@ -151,12 +148,14 @@ public class InfrastructureApp {
      */
     private static void deployMonitoring(DeploymentContext context) {
         NetworkStack networkStack = createNetworkStack(context);
+        MskStack mskStack = createMskStack(context, networkStack);
         MonitoringStackProps props = new MonitoringStackProps(
                 networkStack.getVpc(),
                 networkStack.getDbSg(),
                 networkStack.getAdminApiSg(),
                 networkStack.getCustomerApiSg(),
                 networkStack.getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -188,6 +187,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -221,6 +221,7 @@ public class InfrastructureApp {
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
                 baseStacks.networkStack().getKafkaBrokerSg(),
+                mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
                 MonitoringConfig.fromEnv()
@@ -282,8 +283,7 @@ public class InfrastructureApp {
      */
     private static void deployDns(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
         createDnsStack(context, albStack);
@@ -294,10 +294,7 @@ public class InfrastructureApp {
      */
     private static void deployFull(DeploymentContext context) {
         BaseStacks baseStacks = createBaseStacks(context);
-        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
-        ClickLogBucketStack clickLogBucketStack = createClickLogBucketStack(context);
-        createMskConnectStack(context, baseStacks.networkStack(), mskStack, clickLogBucketStack);
-        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks);
         AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
         createAlbWafStack(context, albStack);
         createDnsStack(context, albStack);
@@ -410,20 +407,43 @@ public class InfrastructureApp {
     /**
      * ECS 서비스 스택 생성.
      */
+    private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks) {
+        return createEcsClusterStack(
+                context,
+                baseStacks,
+                AppConfig.getOptionalValueOrDefault("ECS_MSK_CLUSTER_NAME_OVERRIDE", ""),
+                AppConfig.getOptionalValueOrDefault("ECS_MSK_CLUSTER_ARN_OVERRIDE", ""),
+                AppConfig.getOptionalValueOrDefault("ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE", "")
+        );
+    }
+
     private static EcsClusterStack createEcsClusterStack(DeploymentContext context, BaseStacks baseStacks, MskStack mskStack) {
+        return createEcsClusterStack(
+                context,
+                baseStacks,
+                AppConfig.getOptionalValueOrDefault(
+                        "ECS_MSK_CLUSTER_NAME_OVERRIDE",
+                        AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME)
+                ),
+                AppConfig.getOptionalValueOrDefault(
+                        "ECS_MSK_CLUSTER_ARN_OVERRIDE",
+                        mskStack.getCluster().getAttrArn()
+                ),
+                AppConfig.getOptionalValueOrDefault(
+                        "ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE",
+                        mskStack.getBootstrapBrokersSaslIam()
+                )
+        );
+    }
+
+    private static EcsClusterStack createEcsClusterStack(
+            DeploymentContext context,
+            BaseStacks baseStacks,
+            String ecsMskClusterName,
+            String ecsMskClusterArn,
+            String ecsMskBootstrapBrokers
+    ) {
         String legacyApiImageTag = AppConfig.getOptionalValueOrDefault("API_IMAGE_TAG", DEFAULT_IMAGE_TAG);
-        String ecsMskClusterName = AppConfig.getOptionalValueOrDefault(
-                "ECS_MSK_CLUSTER_NAME_OVERRIDE",
-                AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME)
-        );
-        String ecsMskClusterArn = AppConfig.getOptionalValueOrDefault(
-                "ECS_MSK_CLUSTER_ARN_OVERRIDE",
-                mskStack.getCluster().getAttrArn()
-        );
-        String ecsMskBootstrapBrokers = AppConfig.getOptionalValueOrDefault(
-                "ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE",
-                mskStack.getBootstrapBrokersSaslIam()
-        );
 
         return new EcsClusterStack(
                 context.app(),

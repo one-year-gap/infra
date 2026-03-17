@@ -57,6 +57,10 @@ public class FargateBackgroundService extends Construct {
                 .environment(props.environment())
                 .secrets(ecsSecrets);
 
+        if (props.entryPoint() != null && !props.entryPoint().isEmpty()) {
+            containerOptions.entryPoint(props.entryPoint());
+        }
+
         if (props.command() != null && !props.command().isEmpty()) {
             containerOptions.command(props.command());
         }
