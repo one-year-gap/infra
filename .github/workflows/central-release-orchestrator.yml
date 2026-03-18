@@ -1016,118 +1016,168 @@ jobs:
         needs.resolve-context.outputs.deploy_customer_web == 'true'
       )
     steps:
-      - name: Checkout infra repo
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Install CDK CLI
-        run: npm install -g aws-cdk@latest
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy ECS stack (image rollout)
+      # CDK/Java 없이 AWS CLI만으로 이미지 롤아웃 수행.
+      # 전략: CloudFormation EcsClusterStack에서 서비스 ARN 조회 → 현재 task definition 읽기
+      #       → 이미지 태그만 교체한 새 revision 등록 → update-service → services-stable 대기
+      - name: Roll out new images via ECS task definition update
         id: deploy-ecs
         shell: bash
-        working-directory: infrastructure
         env:
-          DEPLOY_MODE: ecs
-          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
+          RELEASE_TAG:       ${{ needs.create-tag.outputs.version_tag }}
           DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
-          DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
+          DEPLOY_ADMIN_WEB:  ${{ needs.resolve-context.outputs.deploy_admin_web }}
         run: |
           set -euo pipefail
 
-          # [FIX] resolve-ecs-image-tags.sh 외부 스크립트 의존 제거 — 인라인으로 직접 resolve
-          # ECR 이미지 태그 규칙:
-          #   admin-web   → ${RELEASE_TAG}
-          #   api-server  → admin-${RELEASE_TAG} / customer-${RELEASE_TAG}
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-          # admin-web: 배포 대상이면 ECR에서 latest resolve, 아니면 현재 서비스 태그 유지
+          # ── 헬퍼: CloudFormation EcsClusterStack에서 LogicalResourceId 패턴으로 서비스 ARN 조회
+          get_service_arn() {
+            local pattern="$1"
+            aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Service' && starts_with(LogicalResourceId,'${pattern}')].PhysicalResourceId | [0]" \
+              --output text 2>/dev/null || true
+          }
+
+          # ── 헬퍼: 서비스 ARN → cluster / service name 분리
+          parse_cluster() { echo "$1" | awk -F'/' '{print $(NF-1)}'; }
+          parse_service() { echo "$1" | awk -F'/' '{print $NF}'; }
+
+          # ── 헬퍼: task definition에서 특定 컨테이너 이미지를 교체한 새 revision 등록 후 ARN 반환
+          register_new_revision() {
+            local current_taskdef_arn="$1"
+            local container_name="$2"
+            local new_image_uri="$3"
+
+            local taskdef_json
+            taskdef_json="$(aws ecs describe-task-definition \
+              --region "$AWS_REGION" \
+              --task-definition "$current_taskdef_arn" \
+              --query 'taskDefinition' \
+              --output json)"
+
+            local new_taskdef_json
+            new_taskdef_json="$(echo "$taskdef_json" | jq \
+              --arg img "$new_image_uri" \
+              --arg cname "$container_name" \
+              '
+              .containerDefinitions |= (
+                if any(.[]; .name == $cname)
+                then map(if .name == $cname then .image = $img else . end)
+                else (.[0].image = $img | .)
+                end
+              )
+              | del(.taskDefinitionArn, .revision, .status,
+                    .requiresAttributes, .compatibilities,
+                    .registeredAt, .registeredBy)
+              ')"
+
+            aws ecs register-task-definition \
+              --region "$AWS_REGION" \
+              --cli-input-json "$new_taskdef_json" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          }
+
+          # ── 헬퍼: ECS 서비스 롤아웃 + stable 대기
+          rollout_service() {
+            local cluster="$1"
+            local service="$2"
+            local new_taskdef_arn="$3"
+
+            aws ecs update-service \
+              --region "$AWS_REGION" \
+              --cluster "$cluster" \
+              --service "$service" \
+              --task-definition "$new_taskdef_arn" \
+              --force-new-deployment \
+              --output json > /dev/null
+
+            echo "Waiting for service to stabilize: $service"
+            aws ecs wait services-stable \
+              --region "$AWS_REGION" \
+              --cluster "$cluster" \
+              --services "$service"
+            echo "Service stable: $service"
+          }
+
+          deployed_services=()
+
+          # ── admin-web 롤아웃
           if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
-            ADMIN_WEB_IMAGE_TAG="${RELEASE_TAG}"
-          else
-            # 배포 대상이 아닌 경우: 현재 ECS 서비스에서 실행 중인 태그를 그대로 사용
-            ADMIN_WEB_IMAGE_TAG="$(aws ecr describe-images \
-              --region "$AWS_REGION" \
-              --repository-name "${ADMIN_WEB_REPOSITORY}" \
-              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' \
-              --output text 2>/dev/null || echo "")"
+            svc_arn="$(get_service_arn "AdminWeb")"
+            if [ -z "$svc_arn" ] || [ "$svc_arn" = "None" ]; then
+              echo "::error::AdminWeb service not found in EcsClusterStack"
+              exit 1
+            fi
+            cluster="$(parse_cluster "$svc_arn")"
+            service="$(parse_service "$svc_arn")"
+
+            current_taskdef="$(aws ecs describe-services \
+              --region "$AWS_REGION" --cluster "$cluster" --services "$service" \
+              --query 'services[0].taskDefinition' --output text)"
+
+            new_image="${REGISTRY}/${ADMIN_WEB_REPOSITORY}:${RELEASE_TAG}"
+            new_taskdef="$(register_new_revision "$current_taskdef" "admin-web" "$new_image")"
+            rollout_service "$cluster" "$service" "$new_taskdef"
+
+            echo "admin_web_image_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            deployed_services+=("AdminWeb($service)")
           fi
 
+          # ── api-server 롤아웃 (admin / customer 프로파일 각각 별도 서비스)
           if [ "${DEPLOY_API_SERVER}" = "true" ]; then
-            ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
-            CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
-          else
-            ADMIN_API_IMAGE_TAG="$(aws ecr describe-images \
-              --region "$AWS_REGION" \
-              --repository-name "${API_SERVER_REPOSITORY}" \
-              --filter '{"tagStatus":"TAGGED"}' \
-              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags' \
-              --output json 2>/dev/null \
-              | jq -r '.[] | select(startswith("admin-"))' | head -n1 || echo "")"
-            CUSTOMER_API_IMAGE_TAG="$(aws ecr describe-images \
-              --region "$AWS_REGION" \
-              --repository-name "${API_SERVER_REPOSITORY}" \
-              --filter '{"tagStatus":"TAGGED"}' \
-              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags' \
-              --output json 2>/dev/null \
-              | jq -r '.[] | select(startswith("customer-"))' | head -n1 || echo "")"
+            # Admin API
+            admin_svc_arn="$(get_service_arn "AdminApi")"
+            if [ -z "$admin_svc_arn" ] || [ "$admin_svc_arn" = "None" ]; then
+              echo "::error::AdminApi service not found in EcsClusterStack"
+              exit 1
+            fi
+            admin_cluster="$(parse_cluster "$admin_svc_arn")"
+            admin_service="$(parse_service "$admin_svc_arn")"
+
+            admin_cur_taskdef="$(aws ecs describe-services \
+              --region "$AWS_REGION" --cluster "$admin_cluster" --services "$admin_service" \
+              --query 'services[0].taskDefinition' --output text)"
+
+            admin_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:admin-${RELEASE_TAG}"
+            admin_new_taskdef="$(register_new_revision "$admin_cur_taskdef" "api-server" "$admin_new_image")"
+
+            # Customer API
+            customer_svc_arn="$(get_service_arn "CustomerApi")"
+            if [ -z "$customer_svc_arn" ] || [ "$customer_svc_arn" = "None" ]; then
+              echo "::error::CustomerApi service not found in EcsClusterStack"
+              exit 1
+            fi
+            customer_cluster="$(parse_cluster "$customer_svc_arn")"
+            customer_service="$(parse_service "$customer_svc_arn")"
+
+            customer_cur_taskdef="$(aws ecs describe-services \
+              --region "$AWS_REGION" --cluster "$customer_cluster" --services "$customer_service" \
+              --query 'services[0].taskDefinition' --output text)"
+
+            customer_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:customer-${RELEASE_TAG}"
+            customer_new_taskdef="$(register_new_revision "$customer_cur_taskdef" "api-server" "$customer_new_image")"
+
+            # 두 서비스 롤아웃 (순서 무관하게 동시 진행은 불가하므로 순차 실행)
+            rollout_service "$admin_cluster"    "$admin_service"    "$admin_new_taskdef"
+            rollout_service "$customer_cluster" "$customer_service" "$customer_new_taskdef"
+
+            echo "admin_api_image_tag=admin-${RELEASE_TAG}"       >> "$GITHUB_OUTPUT"
+            echo "customer_api_image_tag=customer-${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            deployed_services+=("AdminApi($admin_service)" "CustomerApi($customer_service)")
           fi
 
-          export ADMIN_WEB_IMAGE_TAG ADMIN_API_IMAGE_TAG CUSTOMER_API_IMAGE_TAG
-
-          msk_cluster_name="$(aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name MskStack \
-            --query "Stacks[0].Outputs[?OutputKey=='MskClusterName'].OutputValue | [0]" \
-            --output text 2>/dev/null || true)"
-          msk_cluster_arn="$(aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name MskStack \
-            --query "Stacks[0].Outputs[?OutputKey=='MskClusterArn'].OutputValue | [0]" \
-            --output text 2>/dev/null || true)"
-          msk_bootstrap_brokers="$(aws cloudformation describe-stacks \
-            --region "$AWS_REGION" \
-            --stack-name MskStack \
-            --query "Stacks[0].Outputs[?OutputKey=='MskBootstrapBrokersSaslIam'].OutputValue | [0]" \
-            --output text 2>/dev/null || true)"
-
-          if [ -z "$msk_cluster_name" ] || [ "$msk_cluster_name" = "None" ] \
-            || [ -z "$msk_cluster_arn" ] || [ "$msk_cluster_arn" = "None" ] \
-            || [ -z "$msk_bootstrap_brokers" ] || [ "$msk_bootstrap_brokers" = "None" ]; then
-            echo "::error::Could not resolve provisioned MSK outputs from MskStack."
-            exit 1
-          fi
-
-          echo "::add-mask::$msk_bootstrap_brokers"
-
-          export ECS_MSK_CLUSTER_NAME_OVERRIDE="$msk_cluster_name"
-          export ECS_MSK_CLUSTER_ARN_OVERRIDE="$msk_cluster_arn"
-          export ECS_MSK_BOOTSTRAP_BROKERS_OVERRIDE="$msk_bootstrap_brokers"
-
-          {
-            echo "admin_web_image_tag=$ADMIN_WEB_IMAGE_TAG"
-            echo "admin_api_image_tag=$ADMIN_API_IMAGE_TAG"
-            echo "customer_api_image_tag=$CUSTOMER_API_IMAGE_TAG"
-          } >> "$GITHUB_OUTPUT"
-
-          cdk deploy EcsClusterStack --exclusively --require-approval never
+          echo "Deployed services: ${deployed_services[*]:-none}"
 
       - name: Summary
         run: |
