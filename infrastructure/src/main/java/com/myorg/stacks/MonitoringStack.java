@@ -3,12 +3,18 @@ package com.myorg.stacks;
 import com.myorg.config.AppConfig;
 import com.myorg.config.EnvKey;
 import com.myorg.constants.MonitoringConstants;
-import com.myorg.constants.NetworkConstants;
 import com.myorg.props.MonitoringStackProps;
 import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
-import software.amazon.awscdk.services.ec2.*;
+import software.amazon.awscdk.services.ec2.BlockDevice;
+import software.amazon.awscdk.services.ec2.BlockDeviceVolume;
+import software.amazon.awscdk.services.ec2.EbsDeviceOptions;
+import software.amazon.awscdk.services.ec2.EbsDeviceVolumeType;
+import software.amazon.awscdk.services.ec2.Instance;
+import software.amazon.awscdk.services.ec2.MachineImage;
+import software.amazon.awscdk.services.ec2.SubnetSelection;
+import software.amazon.awscdk.services.ec2.UserData;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.iam.Role;
 import software.amazon.awscdk.services.iam.ServicePrincipal;
@@ -23,10 +29,9 @@ import java.util.List;
  */
 public class MonitoringStack extends Stack {
     private final Instance grafanaInstance;
-    private static final int[] PINPOINT_COLLECTOR_PORTS = {9991, 9992, 9993};
-    private static final int MSK_IAM_PORT = 9098;
     private static final String REMOTE_HOST_PORT_FORWARD_DOCUMENT = "AWS-StartPortForwardingSessionToRemoteHost";
     private static final int LOCAL_PORT_FORWARD_OFFSET = 10_000;
+    private static final String MONITORING_CLOUD_MAP_INSTANCE_ID = "monitoring-ec2";
 
     public MonitoringStack(
             Construct scope,
@@ -34,81 +39,6 @@ public class MonitoringStack extends Stack {
             StackProps props,
             MonitoringStackProps stackProps) {
         super(scope, id, props);
-
-        SecurityGroup grafanaSg = SecurityGroup.Builder.create(this, "MonitoringSg")
-                .vpc(stackProps.vpc())
-                .description("Grafana Security Group")
-                .allowAllOutbound(true)
-                .build();
-
-        CfnSecurityGroupIngress.Builder.create(this, "GrafanaToDbIngress")
-                .groupId(stackProps.dbSg().getSecurityGroupId())
-                .ipProtocol("tcp")
-                .fromPort(NetworkConstants.PORT_POSTGRES)
-                .toPort(NetworkConstants.PORT_POSTGRES)
-                .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
-                .description("Grafana to DB PostgreSQL")
-                .build();
-        CfnSecurityGroupIngress.Builder.create(this, "GrafanaToAdminApiIngress")
-                .groupId(stackProps.adminApiSg().getSecurityGroupId())
-                .ipProtocol("tcp")
-                .fromPort(stackProps.adminApiPort())
-                .toPort(stackProps.adminApiPort())
-                .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
-                .description("Grafana to Admin API Actuator")
-                .build();
-        CfnSecurityGroupIngress.Builder.create(this, "GrafanaToCustomerApiIngress")
-                .groupId(stackProps.customerApiSg().getSecurityGroupId())
-                .ipProtocol("tcp")
-                .fromPort(stackProps.customerApiPort())
-                .toPort(stackProps.customerApiPort())
-                .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
-                .description("Grafana to Customer API Actuator")
-                .build();
-        CfnSecurityGroupIngress.Builder.create(this, "GrafanaToMskIngress")
-                .groupId(stackProps.kafkaBrokerSg().getSecurityGroupId())
-                .ipProtocol("tcp")
-                .fromPort(MSK_IAM_PORT)
-                .toPort(MSK_IAM_PORT)
-                .sourceSecurityGroupId(grafanaSg.getSecurityGroupId())
-                .description("Grafana to MSK IAM")
-                .build();
-
-        for (int port : PINPOINT_COLLECTOR_PORTS) {
-            CfnSecurityGroupIngress.Builder.create(this, "PinpointFromAdminApiIngress" + port)
-                    .groupId(grafanaSg.getSecurityGroupId())
-                    .ipProtocol("tcp")
-                    .fromPort(port)
-                    .toPort(port)
-                    .sourceSecurityGroupId(stackProps.adminApiSg().getSecurityGroupId())
-                    .description("Admin API to Pinpoint collector " + port)
-                    .build();
-            CfnSecurityGroupIngress.Builder.create(this, "PinpointFromCustomerApiIngress" + port)
-                    .groupId(grafanaSg.getSecurityGroupId())
-                    .ipProtocol("tcp")
-                    .fromPort(port)
-                    .toPort(port)
-                    .sourceSecurityGroupId(stackProps.customerApiSg().getSecurityGroupId())
-                    .description("Customer API to Pinpoint collector " + port)
-                    .build();
-
-            CfnSecurityGroupEgress.Builder.create(this, "AdminApiToPinpointEgress" + port)
-                    .groupId(stackProps.adminApiSg().getSecurityGroupId())
-                    .ipProtocol("tcp")
-                    .fromPort(port)
-                    .toPort(port)
-                    .destinationSecurityGroupId(grafanaSg.getSecurityGroupId())
-                    .description("Admin API egress to Pinpoint collector " + port)
-                    .build();
-            CfnSecurityGroupEgress.Builder.create(this, "CustomerApiToPinpointEgress" + port)
-                    .groupId(stackProps.customerApiSg().getSecurityGroupId())
-                    .ipProtocol("tcp")
-                    .fromPort(port)
-                    .toPort(port)
-                    .destinationSecurityGroupId(grafanaSg.getSecurityGroupId())
-                    .description("Customer API egress to Pinpoint collector " + port)
-                    .build();
-        }
 
         Role grafanaRole = Role.Builder.create(this, "GrafanaEc2Role")
                 .assumedBy(new ServicePrincipal("ec2.amazonaws.com"))
@@ -140,6 +70,13 @@ public class MonitoringStack extends Stack {
         grafanaRole.addToPolicy(PolicyStatement.Builder.create()
                 .actions(List.of("logs:GetLogEvents", "logs:FilterLogEvents"))
                 .resources(stackProps.config().cloudWatchLogGroupArns(this.getRegion(), this.getAccount()))
+                .build());
+        grafanaRole.addToPolicy(PolicyStatement.Builder.create()
+                .actions(List.of(
+                        "route53:ListHostedZonesByName",
+                        "servicediscovery:ListServices",
+                        "servicediscovery:RegisterInstance"))
+                .resources(List.of("*"))
                 .build());
 
         // Loki S3 저장소 접근
@@ -223,6 +160,10 @@ public class MonitoringStack extends Stack {
                 "chmod +x /opt/monitoring/install-monitoring.sh",
                 "/opt/monitoring/install-monitoring.sh"
         );
+        userData.addCommands(buildCloudMapRegistrationCommands(
+                AppConfig.getInternalDomainName(),
+                stackProps.config().grafanaConfig().grafanaServiceName()
+        ).toArray(String[]::new));
 
         this.grafanaInstance = Instance.Builder.create(this, "GrafanaServer")
                 .vpc(stackProps.vpc())
@@ -231,7 +172,7 @@ public class MonitoringStack extends Stack {
                         .build())
                 .instanceType(stackProps.config().toInstanceType())
                 .machineImage(MachineImage.latestAmazonLinux2023())
-                .securityGroup(grafanaSg)
+                .securityGroup(stackProps.monitoringSg())
                 .role(grafanaRole)
                 .userData(userData)
                 .blockDevices(List.of(
@@ -303,5 +244,38 @@ public class MonitoringStack extends Stack {
                + " --document-name " + REMOTE_HOST_PORT_FORWARD_DOCUMENT
                + " --parameters '{\"host\":[\"" + host + "\"],\"portNumber\":[\"" + remotePort
                + "\"],\"localPortNumber\":[\"" + localPort + "\"]}'";
+    }
+
+    private List<String> buildCloudMapRegistrationCommands(String internalDomainName, String serviceName) {
+        String privateZoneName = internalDomainName.endsWith(".")
+                ? internalDomainName
+                : internalDomainName + ".";
+
+        return List.of(
+                "cat <<'EOF' >/opt/monitoring/register-grafana-cloudmap.sh",
+                "#!/bin/bash",
+                "set -euo pipefail",
+                "DOMAIN_NAME=\"" + internalDomainName + "\"",
+                "PRIVATE_ZONE_NAME=\"" + privateZoneName + "\"",
+                "SERVICE_NAME=\"" + serviceName + "\"",
+                "INSTANCE_ID=\"" + MONITORING_CLOUD_MAP_INSTANCE_ID + "\"",
+                "TOKEN=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')",
+                "PRIVATE_IP=$(curl -fsS -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/local-ipv4)",
+                "NAMESPACE_ARN=$(aws route53 list-hosted-zones-by-name --dns-name \"$DOMAIN_NAME\" --query \"HostedZones[?Name=='$PRIVATE_ZONE_NAME'].LinkedService.Description | [0]\" --output text)",
+                "if [ -z \"$NAMESPACE_ARN\" ] || [ \"$NAMESPACE_ARN\" = \"None\" ]; then",
+                "  echo \"Cloud Map namespace not found for $DOMAIN_NAME\"",
+                "  exit 0",
+                "fi",
+                "NAMESPACE_ID=\"${NAMESPACE_ARN##*/}\"",
+                "SERVICE_ID=$(aws servicediscovery list-services --filters Name=NAMESPACE_ID,Values=\"$NAMESPACE_ID\",Condition=EQ --query \"Services[?Name=='$SERVICE_NAME'].Id | [0]\" --output text)",
+                "if [ -z \"$SERVICE_ID\" ] || [ \"$SERVICE_ID\" = \"None\" ]; then",
+                "  echo \"Cloud Map service not found for $SERVICE_NAME\"",
+                "  exit 0",
+                "fi",
+                "aws servicediscovery register-instance --service-id \"$SERVICE_ID\" --instance-id \"$INSTANCE_ID\" --attributes AWS_INSTANCE_IPV4=\"$PRIVATE_IP\"",
+                "EOF",
+                "chmod +x /opt/monitoring/register-grafana-cloudmap.sh",
+                "/opt/monitoring/register-grafana-cloudmap.sh || echo 'Cloud Map registration skipped'"
+        );
     }
 }

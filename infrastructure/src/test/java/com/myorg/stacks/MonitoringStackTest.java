@@ -48,6 +48,9 @@ class MonitoringStackTest {
         SecurityGroup dbSg = SecurityGroup.Builder.create(fixtureStack, "TestDbSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup monitoringSg = SecurityGroup.Builder.create(fixtureStack, "TestMonitoringSg")
+                .vpc(vpc)
+                .build();
         SecurityGroup adminApiSg = SecurityGroup.Builder.create(fixtureStack, "TestAdminApiSg")
                 .vpc(vpc)
                 .build();
@@ -64,6 +67,7 @@ class MonitoringStackTest {
                 StackProps.builder().env(env).build(),
                 new MonitoringStackProps(
                         vpc,
+                        monitoringSg,
                         dbSg,
                         adminApiSg,
                         customerApiSg,
@@ -87,12 +91,12 @@ class MonitoringStackTest {
         String renderedUserData = (String) userData.get("Fn::Base64");
 
         assertThat(templateJson)
-                .contains("Grafana to MSK IAM")
-                .contains("FromPort=9098")
                 .contains("kafka-cluster:Connect")
                 .contains("kafka-cluster:DeleteTopic")
                 .contains("kafka-cluster:AlterTopic")
                 .contains("kafka-cluster:AlterTopicDynamicConfiguration")
+                .contains("servicediscovery:RegisterInstance")
+                .contains("route53:ListHostedZonesByName")
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk/*")
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:topic/holliverse-msk/*")
                 .contains("arn:aws:kafka:ap-northeast-2:123456789012:group/holliverse-msk/*")
@@ -101,6 +105,11 @@ class MonitoringStackTest {
                 .contains("KafkaUiPortForward")
                 .contains("\"localPortNumber\":[\"18088\"]")
                 .contains("\"localPortNumber\":[\"18080\"]");
+        assertThat(renderedUserData)
+                .contains("register-grafana-cloudmap.sh")
+                .contains("servicediscovery register-instance")
+                .contains("monitoring-ec2")
+                .contains("grafana-server");
         assertThat(renderedUserData.length()).isLessThan(25_600);
     }
 

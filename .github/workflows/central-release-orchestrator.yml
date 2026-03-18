@@ -1182,74 +1182,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          latest_ecr_tag_for_prefix() {
-            local repository="$1"
-            local prefix="$2"
-            local fallback="$3"
-            local tags=""
-            local latest_tag=""
-
-            if [ "${prefix}" = "${fallback}" ]; then
-              fallback=""
-            fi
-
-            tags="$(aws ecr describe-images \
-              --region "$AWS_REGION" \
-              --repository-name "$repository" \
-              --query 'reverse(sort_by(imageDetails[?imageTags!=null], &imagePushedAt))[].imageTags[]' \
-              --output text 2>/dev/null || true)"
-
-            if [ -n "$tags" ]; then
-              latest_tag="$(printf '%s\n' "$tags" | tr '\t' '\n' | awk -v pfx="$prefix" '
-                NF == 0 { next }
-                pfx == "" { print; exit }
-                index($0, pfx) == 1 { print; exit }
-              ')"
-            fi
-
-            if [ -n "$latest_tag" ]; then
-              echo "$latest_tag"
-              return
-            fi
-
-            if [ -n "$fallback" ]; then
-              echo "$fallback"
-              return
-            fi
-
-            echo "::error::No image tag found in ECR repository=${repository} prefix=${prefix}" >&2
-            exit 1
-          }
-
-          COUNSELING_ANALYTICS_ECR_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY:-${COUNSELING_ANALYTICS_SOURCE_REPO}}"
-
-          current_admin_web_tag="$(latest_ecr_tag_for_prefix "${ADMIN_WEB_REPOSITORY}" "" "latest")"
-          current_admin_api_tag="$(latest_ecr_tag_for_prefix "${API_SERVER_REPOSITORY}" "admin-" "latest")"
-          current_customer_api_tag="$(latest_ecr_tag_for_prefix "${API_SERVER_REPOSITORY}" "customer-" "latest")"
-          current_recommendation_realtime_tag="$(latest_ecr_tag_for_prefix "${COUNSELING_ANALYTICS_ECR_REPOSITORY}" "counseling-analytics-" "latest")"
-
-          ADMIN_WEB_IMAGE_TAG="$current_admin_web_tag"
-          ADMIN_API_IMAGE_TAG="$current_admin_api_tag"
-          CUSTOMER_API_IMAGE_TAG="$current_customer_api_tag"
-          RECOMMENDATION_REALTIME_IMAGE_TAG="$current_recommendation_realtime_tag"
-
-          if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
-            ADMIN_WEB_IMAGE_TAG="$RELEASE_TAG"
-          fi
-
-          if [ "${DEPLOY_API_SERVER}" = "true" ]; then
-            ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
-            CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
-          fi
-
-          if [ "${DEPLOY_RECOMMENDATION_REALTIME}" = "true" ]; then
-            RECOMMENDATION_REALTIME_IMAGE_TAG="counseling-analytics-${RELEASE_TAG}"
-          fi
-
-          export ADMIN_WEB_IMAGE_TAG
-          export ADMIN_API_IMAGE_TAG
-          export CUSTOMER_API_IMAGE_TAG
-          export RECOMMENDATION_REALTIME_IMAGE_TAG
+          # 최신 ECR release tag 선택 로직을 워크플로우 밖 스크립트로 분리해
+          # 수동/로컬 배포에서도 같은 규칙을 재사용한다.
+          source <(
+            AWS_REGION="$AWS_REGION" \
+            ADMIN_WEB_REPOSITORY="$ADMIN_WEB_REPOSITORY" \
+            API_SERVER_REPOSITORY="$API_SERVER_REPOSITORY" \
+            COUNSELING_ANALYTICS_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY:-}" \
+            COUNSELING_ANALYTICS_SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO:-}" \
+            RELEASE_TAG="$RELEASE_TAG" \
+            DEPLOY_ADMIN_WEB="$DEPLOY_ADMIN_WEB" \
+            DEPLOY_API_SERVER="$DEPLOY_API_SERVER" \
+            DEPLOY_RECOMMENDATION_REALTIME="$DEPLOY_RECOMMENDATION_REALTIME" \
+            "$GITHUB_WORKSPACE/scripts/resolve-ecs-image-tags.sh" --format shell
+          )
 
           msk_cluster_name="$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
