@@ -1711,6 +1711,44 @@ jobs:
             printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
           }
 
+          ecs_service_exists() {
+            local cluster_name="$1"
+            local service_name="$2"
+
+            [ -n "$cluster_name" ] || return 1
+            [ -n "$service_name" ] || return 1
+
+            local status
+            status="$(aws ecs describe-services \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --services "$service_name" \
+              --query 'services[0].status' \
+              --output text 2>/dev/null || true)"
+            status="$(normalize_aws_text_scalar "$status")"
+            [ "$status" = "ACTIVE" ]
+          }
+
+          resolve_service_name_from_cluster() {
+            local cluster_name="$1"
+            local requested_name="$2"
+            local current_name=""
+
+            if ecs_service_exists "$cluster_name" "$requested_name"; then
+              printf '%s\n' "$requested_name"
+              return
+            fi
+
+            for current_name in intelligence-server recommendation-realtime analysis-server; do
+              if ecs_service_exists "$cluster_name" "$current_name"; then
+                printf '%s\n' "$current_name"
+                return
+              fi
+            done
+
+            printf '%s\n' ""
+          }
+
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
             echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
             exit 1
@@ -1791,20 +1829,29 @@ jobs:
             exit 1
           fi
 
+          resolved_service_name="$(resolve_service_name_from_cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
+          if [ -z "$resolved_service_name" ]; then
+            echo "::error::Could not resolve intelligence-server ECS service in cluster=${COUNSELING_ANALYTICS_CLUSTER_NAME}. secret=${COUNSELING_ANALYTICS_SERVICE_NAME}"
+            exit 1
+          fi
+          if [ "$resolved_service_name" != "$COUNSELING_ANALYTICS_SERVICE_NAME" ]; then
+            echo "::warning::COUNSELING_ANALYTICS_SERVICE_NAME=${COUNSELING_ANALYTICS_SERVICE_NAME} not found. Using live ECS service ${resolved_service_name} instead."
+          fi
+
           aws ecs update-service \
             --region "$AWS_REGION" \
             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
-            --service "$COUNSELING_ANALYTICS_SERVICE_NAME" \
+            --service "$resolved_service_name" \
             --task-definition "$new_taskdef_arn" \
             --force-new-deployment >/dev/null
 
           aws ecs wait services-stable \
             --region "$AWS_REGION" \
             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
-            --services "$COUNSELING_ANALYTICS_SERVICE_NAME"
+            --services "$resolved_service_name"
 
           {
-            echo "intelligence_service_name=$COUNSELING_ANALYTICS_SERVICE_NAME"
+            echo "intelligence_service_name=$resolved_service_name"
             echo "intelligence_task_definition=$new_taskdef_arn"
             echo "intelligence_image=$IMAGE_URI"
           } >> "$GITHUB_OUTPUT"
