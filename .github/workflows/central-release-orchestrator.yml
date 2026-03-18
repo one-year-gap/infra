@@ -50,6 +50,7 @@ on:
         required: false
       WORKER_ASSIGN_PUBLIC_IP:
         required: false
+      # Intelligence server (AWS 리소스명은 counseling-analytics prefix 유지)
       COUNSELING_ANALYTICS_REPOSITORY:
         required: false
       COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:
@@ -113,7 +114,7 @@ on:
           - release:minor
           - release:patch
       deploy-labels:
-        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web,deploy:worker,deploy:recommendation-server)"
+        description: "comma-separated deploy labels (ex: deploy:api-server,deploy:admin-web,deploy:worker,deploy:intelligence-server)"
         required: true
         default: "deploy:api-server"
         type: string
@@ -149,7 +150,6 @@ env:
   WORKER_SUBNET_IDS: ${{ secrets.WORKER_SUBNET_IDS }}
   WORKER_SECURITY_GROUP_IDS: ${{ secrets.WORKER_SECURITY_GROUP_IDS }}
   WORKER_ASSIGN_PUBLIC_IP: ${{ secrets.WORKER_ASSIGN_PUBLIC_IP }}
-  # 기본값은 비활성(빈 값)로 두고, 필요할 때만 secret 값을 true로 설정해 CI worker 실행을 켠다.
   CI_RUN_WORKER_TASK: ${{ secrets.CI_RUN_WORKER_TASK }}
   COUNSELING_ANALYTICS_REPOSITORY: ${{ secrets.COUNSELING_ANALYTICS_REPOSITORY }}
   COUNSELING_ANALYTICS_TASK_DEFINITION_ARN: ${{ secrets.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN }}
@@ -170,19 +170,19 @@ env:
   CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN: ${{ secrets.CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARN }}
   ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS: ${{ secrets.ADMIN_API_RUNTIME_SECRET_KMS_KEY_ARNS }}
   CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS: ${{ secrets.CUSTOMER_API_RUNTIME_SECRET_KMS_KEY_ARNS }}
-  # Source repos
+  # Source repos — 평문 상수. secret 값과 우연히 일치하면 GitHub이 로그를 마스킹하지만
+  # 값 자체는 정상 사용되므로 job output으로만 노출하지 않으면 됩니다.
   API_SERVER_SOURCE_REPO: one-year-gap/api-server
   ADMIN_WEB_SOURCE_REPO: one-year-gap/admin-fe
   WORKER_SOURCE_REPO: one-year-gap/worker
   INTELLIGENCE_SERVER_SOURCE_REPO: one-year-gap/intelligence-server
-  # Legacy alias kept because build/deploy job names and variables still use counseling-analytics naming.
-  COUNSELING_ANALYTICS_SOURCE_REPO: one-year-gap/intelligence-server
 
 jobs:
   resolve-context:
     runs-on: ubuntu-latest
     outputs:
-      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      # [FIX] source_repo는 secret 값과 충돌해 job output이 skip되므로 제거.
+      # 대신 source_repo_name(안전한 단순 문자열)을 내려받아 각 job이 내부에서 복원한다.
       source_repo_name: ${{ steps.resolve.outputs.source_repo_name }}
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       release_label: ${{ steps.resolve.outputs.release_label }}
@@ -192,10 +192,10 @@ jobs:
       deploy_admin_web: ${{ steps.resolve.outputs.deploy_admin_web }}
       deploy_customer_web: ${{ steps.resolve.outputs.deploy_customer_web }}
       deploy_worker: ${{ steps.resolve.outputs.deploy_worker }}
-      deploy_counseling_analytics: ${{ steps.resolve.outputs.deploy_counseling_analytics }}
-      deploy_recommendation_realtime: ${{ steps.resolve.outputs.deploy_recommendation_realtime }}
-      deploy_counseling_batch: ${{ steps.resolve.outputs.deploy_counseling_batch }}
-      can_deploy_counseling_service: ${{ steps.resolve.outputs.can_deploy_counseling_service }}
+      # [CHANGE] deploy_intelligence_server 단일 output으로 통합
+      # (구: deploy_counseling_analytics + deploy_recommendation_realtime + deploy_counseling_batch)
+      deploy_intelligence_server: ${{ steps.resolve.outputs.deploy_intelligence_server }}
+      can_deploy_intelligence_service: ${{ steps.resolve.outputs.can_deploy_intelligence_service }}
       ci_run_worker_task: ${{ steps.resolve.outputs.ci_run_worker_task }}
     steps:
       - name: Resolve source + labels
@@ -210,16 +210,13 @@ jobs:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           script: |
             const releaseAllowed = ["release:major", "release:minor", "release:patch"];
-            const deployAllowed  = [
+            // [CHANGE] deploy:intelligence-server 하나로 통합. 구 label(counseling-analytics 등) 제거.
+            const deployAllowed = [
               "deploy:admin-web",
               "deploy:api-server",
               "deploy:customer-web",
               "deploy:worker",
-              "deploy:counseling-analytics",
-              "deploy:recommendation-realtime",
-              "deploy:counseling-batch",
-              "deploy:recommendation-server",
-              "deploy:analysis-server"
+              "deploy:intelligence-server",
             ];
 
             function splitRepo(full) {
@@ -237,100 +234,22 @@ jobs:
                 .filter(Boolean);
             }
 
-            function getIntelligenceNamespaceState(deployLabels) {
-              const hasLegacyNamespace = deployLabels.includes("deploy:counseling-analytics");
-              const hasRecommendationNamespace = deployLabels.some(label =>
-                label === "deploy:recommendation-server" || label === "deploy:recommendation-realtime"
-              );
-              const hasAnalysisNamespace = deployLabels.some(label =>
-                label === "deploy:analysis-server" || label === "deploy:counseling-batch"
-              );
-              return {
-                hasLegacyNamespace,
-                hasRecommendationNamespace,
-                hasAnalysisNamespace
-              };
-            }
-
-            function resolveCanonicalSourceRepoName(repoName, deployLabels) {
-              const namespaceState = getIntelligenceNamespaceState(deployLabels);
-
+            // [CHANGE] 단순화: intelligence-server 관련 sub-namespace 분기 로직 제거
+            function resolveCanonicalSourceRepoName(repoName) {
               switch (repoName) {
-                case "recommendation-server":
-                  if (
-                    !namespaceState.hasRecommendationNamespace ||
-                    namespaceState.hasLegacyNamespace ||
-                    namespaceState.hasAnalysisNamespace
-                  ) {
-                    throw new Error(
-                      "recommendation-server source repo hint requires recommendation-server/recommendation-realtime deploy labels only"
-                    );
-                  }
+                case "intelligence-server":
                   return "intelligence-server";
-                case "analysis-server":
-                  if (
-                    !namespaceState.hasAnalysisNamespace ||
-                    namespaceState.hasLegacyNamespace ||
-                    namespaceState.hasRecommendationNamespace
-                  ) {
-                    throw new Error(
-                      "analysis-server source repo hint requires analysis-server/counseling-batch deploy labels only"
-                    );
-                  }
-                  return "intelligence-server";
-                case "counseling-analytics":
-                case "intelligence-server": {
-                  const namespaceCount = [
-                    namespaceState.hasLegacyNamespace,
-                    namespaceState.hasRecommendationNamespace,
-                    namespaceState.hasAnalysisNamespace,
-                  ].filter(Boolean).length;
-
-                  if (namespaceCount !== 1) {
-                    throw new Error(
-                      "intelligence-server release must resolve to exactly one namespace. " +
-                        "use one of deploy:analysis-server/deploy:counseling-batch, " +
-                        "deploy:recommendation-server/deploy:recommendation-realtime, or deploy:counseling-analytics"
-                    );
-                  }
-
-                  if (namespaceState.hasRecommendationNamespace) {
-                    return "intelligence-server";
-                  }
-                  if (namespaceState.hasAnalysisNamespace) {
-                    return "intelligence-server";
-                  }
-                  return "intelligence-server";
-                }
                 default:
                   return repoName;
               }
             }
 
-            function resolveTagNamespace(repoName, deployLabels) {
-              if (repoName !== "intelligence-server") {
-                return "";
-              }
-
-              const namespaceState = getIntelligenceNamespaceState(deployLabels);
-              if (namespaceState.hasRecommendationNamespace) {
-                return "recommendation-server";
-              }
-              if (namespaceState.hasAnalysisNamespace) {
-                return "analysis-server";
-              }
-              return "counseling-analytics";
-            }
-
             function resolveConfiguredSourceRepo(repoName, fallbackFull = "") {
               const repoMap = {
-                "api-server": process.env.API_SERVER_SOURCE_REPO,
-                "admin-fe": process.env.ADMIN_WEB_SOURCE_REPO,
-                "worker": process.env.WORKER_SOURCE_REPO,
-                "recommendation-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
-                "analysis-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
-                "counseling-analytics": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
-                "intelligence-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO
+                "api-server":          process.env.API_SERVER_SOURCE_REPO,
+                "admin-fe":            process.env.ADMIN_WEB_SOURCE_REPO,
+                "worker":              process.env.WORKER_SOURCE_REPO,
+                "intelligence-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
               };
               return String(repoMap[repoName] || fallbackFull || "").trim();
             }
@@ -350,7 +269,6 @@ jobs:
             } else if (context.eventName === "workflow_call") {
               sourceRepo = process.env.IN_SOURCE_REPO;
               sourceSha  = process.env.IN_SOURCE_SHA;
-              // workflow_call은 PR 라벨 자동 감지 경로로 진입하므로 sourceSha 필수
 
             } else if (context.eventName === "repository_dispatch") {
               sourceRepo = context.payload.client_payload?.source_repo;
@@ -375,7 +293,7 @@ jobs:
                 process.env.API_SERVER_SOURCE_REPO,
                 process.env.ADMIN_WEB_SOURCE_REPO,
                 process.env.WORKER_SOURCE_REPO,
-                process.env.INTELLIGENCE_SERVER_SOURCE_REPO
+                process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
               ].filter(Boolean).map(v => String(v).trim())));
 
               let matchedRepo = null;
@@ -455,43 +373,34 @@ jobs:
               throw new Error("deploy:customer-web is manual only. use customer-web-manual-release workflow");
             }
 
-            const releaseLevel = releaseLabel.replace("release:", "");
-            const sourceRepoKey = resolveCanonicalSourceRepoName(repo, deployLabels);
+            const releaseLevel    = releaseLabel.replace("release:", "");
+            const sourceRepoKey   = resolveCanonicalSourceRepoName(repo);
             const resolvedSourceRepo = resolveConfiguredSourceRepo(sourceRepoKey, full);
-            const tagNamespace = resolveTagNamespace(sourceRepoKey, deployLabels);
+            // [CHANGE] tag_namespace는 intelligence-server 고정, 나머지는 빈 문자열
+            const tagNamespace    = sourceRepoKey === "intelligence-server" ? "intelligence-server" : "";
 
             if (!resolvedSourceRepo) {
               throw new Error(`failed to resolve source repo path for repo=${sourceRepoKey}`);
             }
 
-            core.setOutput("source_repo",      resolvedSourceRepo);
-            core.setOutput("source_repo_name", sourceRepoKey);
-            core.setOutput("source_sha",        sourceSha || "");
-            core.setOutput("release_label",     releaseLabel);
-            core.setOutput("release_level",     releaseLevel);
-            core.setOutput("tag_namespace",     tagNamespace);
-            core.setOutput("deploy_api_server", deployLabels.includes("deploy:api-server") ? "true" : "false");
-            core.setOutput("deploy_admin_web", deployLabels.includes("deploy:admin-web") ? "true" : "false");
-            core.setOutput("deploy_customer_web", deployLabels.includes("deploy:customer-web") ? "true" : "false");
-            core.setOutput("deploy_worker", deployLabels.includes("deploy:worker") ? "true" : "false");
-            core.setOutput("deploy_counseling_analytics", deployLabels.includes("deploy:counseling-analytics") ? "true" : "false");
+            // [FIX] source_repo output 제거: secret 값과 충돌 시 GitHub이 job output 자체를 skip함.
+            //       downstream job들은 source_repo_name으로 내부에서 직접 복원한다.
+            core.setOutput("source_repo_name",  sourceRepoKey);
+            core.setOutput("source_sha",         sourceSha || "");
+            core.setOutput("release_label",      releaseLabel);
+            core.setOutput("release_level",      releaseLevel);
+            core.setOutput("tag_namespace",      tagNamespace);
+            core.setOutput("deploy_api_server",  deployLabels.includes("deploy:api-server")  ? "true" : "false");
+            core.setOutput("deploy_admin_web",   deployLabels.includes("deploy:admin-web")   ? "true" : "false");
+            core.setOutput("deploy_customer_web",deployLabels.includes("deploy:customer-web")? "true" : "false");
+            core.setOutput("deploy_worker",      deployLabels.includes("deploy:worker")      ? "true" : "false");
+            // [CHANGE] intelligence-server 통합 단일 output
             core.setOutput(
-              "deploy_recommendation_realtime",
-              (
-                deployLabels.includes("deploy:recommendation-server") ||
-                deployLabels.includes("deploy:recommendation-realtime") ||
-                deployLabels.includes("deploy:counseling-analytics")
-              ) ? "true" : "false"
+              "deploy_intelligence_server",
+              deployLabels.includes("deploy:intelligence-server") ? "true" : "false"
             );
             core.setOutput(
-              "deploy_counseling_batch",
-              (
-                deployLabels.includes("deploy:analysis-server") ||
-                deployLabels.includes("deploy:counseling-batch")
-              ) ? "true" : "false"
-            );
-            core.setOutput(
-              "can_deploy_counseling_service",
+              "can_deploy_intelligence_service",
               (
                 process.env.COUNSELING_ANALYTICS_CLUSTER_NAME &&
                 process.env.COUNSELING_ANALYTICS_SERVICE_NAME &&
@@ -506,32 +415,42 @@ jobs:
   create-tag:
     runs-on: ubuntu-latest
     needs: [resolve-context]
-    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo != ''
+    # [FIX] source_repo → source_repo_name으로 변경 (source_repo는 secret 충돌로 항상 빈 문자열)
+    if: needs.resolve-context.result == 'success' && needs.resolve-context.outputs.source_repo_name != ''
     outputs:
       version_tag: ${{ steps.bump.outputs.version_tag }}
       target_sha:  ${{ steps.bump.outputs.target_sha }}
     steps:
-      - name: Guard required outputs
-        id: guard-source
+      # [FIX] source_repo_name → 실제 repo 경로 복원 (env 변수 참조, $GITHUB_ENV로 후속 step에 전달)
+      - name: Resolve source repository path
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
-          SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
+          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
         run: |
           set -euo pipefail
-          if [ -z "${SOURCE_REPO}" ] || [[ "${SOURCE_REPO}" != */* ]]; then
-            echo "::error::resolve-context output source_repo is empty/invalid. Aborting to prevent checkout fallback to current repo."
+          case "$SOURCE_REPO_NAME" in
+            api-server)          repo="${API_SERVER_SOURCE_REPO}" ;;
+            admin-fe)            repo="${ADMIN_WEB_SOURCE_REPO}" ;;
+            worker)              repo="${WORKER_SOURCE_REPO}" ;;
+            intelligence-server) repo="${INTELLIGENCE_SERVER_SOURCE_REPO}" ;;
+            *)
+              echo "::error::Unknown source_repo_name: $SOURCE_REPO_NAME"
+              exit 1
+              ;;
+          esac
+          if [ -z "$repo" ] || [[ "$repo" != */* ]]; then
+            echo "::error::Resolved source_repo is empty/invalid for name=$SOURCE_REPO_NAME"
             exit 1
           fi
-          echo "source_repo=${SOURCE_REPO}" >> "$GITHUB_OUTPUT"
-          echo "resolved-source-repo=$SOURCE_REPO"
-          echo "resolved-source-sha=${SOURCE_SHA:-<empty>}"
+          echo "Resolved: $SOURCE_REPO_NAME -> (masked)"
+          # $GITHUB_ENV 경유로 후속 step에 전달. job output이 아니므로 secret 충돌 skip 미발생.
+          echo "RESOLVED_SOURCE_REPO=$repo" >> "$GITHUB_ENV"
 
       - name: Checkout source repo (at source sha)
         if: needs.resolve-context.outputs.source_sha != ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.guard-source.outputs.source_repo }}
+          repository: ${{ env.RESOLVED_SOURCE_REPO }}
           ref: ${{ needs.resolve-context.outputs.source_sha }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
@@ -540,22 +459,22 @@ jobs:
         if: needs.resolve-context.outputs.source_sha == ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.guard-source.outputs.source_repo }}
+          repository: ${{ env.RESOLVED_SOURCE_REPO }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Validate source context
         shell: bash
         env:
-          SOURCE_REPO: ${{ steps.guard-source.outputs.source_repo }}
+          SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
         run: |
           set -euo pipefail
-          echo "source-repo=$SOURCE_REPO"
+          echo "source-repo-name=$SOURCE_REPO_NAME"
           echo "source-sha=${SOURCE_SHA:-<empty>}"
           if [ -n "${SOURCE_SHA}" ]; then
             git cat-file -e "${SOURCE_SHA}^{commit}" || {
-              echo "::error::source-sha does not exist in source-repo. source-repo=$SOURCE_REPO source-sha=$SOURCE_SHA"
+              echo "::error::source-sha does not exist in source-repo. source-repo-name=$SOURCE_REPO_NAME source-sha=$SOURCE_SHA"
               exit 1
             }
           fi
@@ -578,25 +497,31 @@ jobs:
             TARGET_SHA="$(git rev-parse HEAD)"
           fi
 
-          
           OBJECT_TYPE="$(git cat-file -t "$TARGET_SHA" 2>/dev/null || echo 'missing')"
           if [ "$OBJECT_TYPE" != "commit" ]; then
             echo "::error::TARGET_SHA=$TARGET_SHA is not a commit (type=$OBJECT_TYPE). Check that source-sha belongs to this repository." >&2
             exit 1
           fi
 
-          LEGACY_TAG_PATTERN='v[0-9]*.[0-9]*.[0-9]*'
           if [ -n "${TAG_NAMESPACE:-}" ]; then
             TAG_PATTERN="${TAG_NAMESPACE}-v[0-9]*.[0-9]*.[0-9]*"
             LATEST_TAG="$(git tag -l "$TAG_PATTERN" --sort=-v:refname | head -n1)"
 
-            # analysis-server inherits the legacy counseling-analytics version line.
+            # [CHANGE] intelligence-server로 통합 시 구 namespace 태그에서 버전 계승
             if [ -z "$LATEST_TAG" ]; then
-              case "$TAG_NAMESPACE" in
-                analysis-server|counseling-analytics)
-                  LATEST_TAG="$(git tag -l "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n1)"
-                  ;;
-              esac
+              for legacy_ns in "recommendation-server" "analysis-server" "counseling-analytics"; do
+                LEGACY_TAG="$(git tag -l "${legacy_ns}-v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n1)"
+                if [ -n "$LEGACY_TAG" ]; then
+                  LATEST_TAG="$LEGACY_TAG"
+                  echo "Inheriting version from legacy namespace tag: $LATEST_TAG"
+                  break
+                fi
+              done
+            fi
+
+            # 구 global 태그(v*.*.*)에서도 계승 시도
+            if [ -z "$LATEST_TAG" ]; then
+              LATEST_TAG="$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n1)"
             fi
 
             if [ -z "$LATEST_TAG" ]; then
@@ -607,12 +532,14 @@ jobs:
             if [ "$BASE" = "$LATEST_TAG" ]; then
               BASE="${LATEST_TAG#v}"
             fi
+            NEXT_PREFIX="${TAG_NAMESPACE}-v"
           else
-            LATEST_TAG="$(git tag -l "$LEGACY_TAG_PATTERN" --sort=-v:refname | head -n1)"
+            LATEST_TAG="$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" --sort=-v:refname | head -n1)"
             if [ -z "$LATEST_TAG" ]; then
               LATEST_TAG="v0.0.0"
             fi
             BASE="${LATEST_TAG#v}"
+            NEXT_PREFIX="v"
           fi
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
@@ -627,11 +554,7 @@ jobs:
               ;;
           esac
 
-          if [ -n "${TAG_NAMESPACE:-}" ]; then
-            NEXT_TAG="${TAG_NAMESPACE}-v${MAJOR}.${MINOR}.${PATCH}"
-          else
-            NEXT_TAG="v${MAJOR}.${MINOR}.${PATCH}"
-          fi
+          NEXT_TAG="${NEXT_PREFIX}${MAJOR}.${MINOR}.${PATCH}"
 
           if git rev-parse "$NEXT_TAG" >/dev/null 2>&1; then
             echo "::error::Tag already exists: $NEXT_TAG" >&2
@@ -651,45 +574,52 @@ jobs:
       - name: Create GitHub Release (source repo)
         uses: actions/github-script@v7
         env:
-          SOURCE_REPO:        ${{ needs.resolve-context.outputs.source_repo }}
-          VERSION_TAG:        ${{ needs.create-tag.outputs.version_tag }}
-          TARGET_SHA:         ${{ needs.create-tag.outputs.target_sha }}
-          RELEASE_LABEL:      ${{ needs.resolve-context.outputs.release_label }}
-          TAG_NAMESPACE:      ${{ needs.resolve-context.outputs.tag_namespace }}
-          DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
-          DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
-          DEPLOY_CUSTOMER_WEB: ${{ needs.resolve-context.outputs.deploy_customer_web }}
-          DEPLOY_WORKER: ${{ needs.resolve-context.outputs.deploy_worker }}
-          DEPLOY_COUNSELING_ANALYTICS: ${{ needs.resolve-context.outputs.deploy_counseling_analytics }}
-          DEPLOY_RECOMMENDATION_REALTIME: ${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}
-          DEPLOY_COUNSELING_BATCH: ${{ needs.resolve-context.outputs.deploy_counseling_batch }}
+          # [FIX] SOURCE_REPO → SOURCE_REPO_NAME. JS 내부에서 env map으로 실제 경로 복원.
+          SOURCE_REPO_NAME:            ${{ needs.resolve-context.outputs.source_repo_name }}
+          VERSION_TAG:                 ${{ needs.create-tag.outputs.version_tag }}
+          TARGET_SHA:                  ${{ needs.create-tag.outputs.target_sha }}
+          RELEASE_LABEL:               ${{ needs.resolve-context.outputs.release_label }}
+          TAG_NAMESPACE:               ${{ needs.resolve-context.outputs.tag_namespace }}
+          DEPLOY_API_SERVER:           ${{ needs.resolve-context.outputs.deploy_api_server }}
+          DEPLOY_ADMIN_WEB:            ${{ needs.resolve-context.outputs.deploy_admin_web }}
+          DEPLOY_CUSTOMER_WEB:         ${{ needs.resolve-context.outputs.deploy_customer_web }}
+          DEPLOY_WORKER:               ${{ needs.resolve-context.outputs.deploy_worker }}
+          DEPLOY_INTELLIGENCE_SERVER:  ${{ needs.resolve-context.outputs.deploy_intelligence_server }}
         with:
           github-token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           retries: 3
           script: |
             const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-            const sourceRepoRaw  = String(process.env.SOURCE_REPO || "").trim();
+
+            // [FIX] source_repo를 source_repo_name에서 복원 (job output 마스킹 우회)
+            const repoMap = {
+              "api-server":          process.env.API_SERVER_SOURCE_REPO,
+              "admin-fe":            process.env.ADMIN_WEB_SOURCE_REPO,
+              "worker":              process.env.WORKER_SOURCE_REPO,
+              "intelligence-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
+            };
+            const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
+            const sourceRepoRaw  = String(repoMap[sourceRepoName] || "").trim();
             const [owner, repo]  = sourceRepoRaw.split("/");
-            const tag            = process.env.VERSION_TAG;
-            const targetSha      = process.env.TARGET_SHA;
-            const releaseLabel   = process.env.RELEASE_LABEL;
-            const tagNamespace   = String(process.env.TAG_NAMESPACE || "").trim();
+
+            const tag          = process.env.VERSION_TAG;
+            const targetSha    = process.env.TARGET_SHA;
+            const releaseLabel = process.env.RELEASE_LABEL;
+            const tagNamespace = String(process.env.TAG_NAMESPACE || "").trim();
+
             const deployLabels = [];
-            if (String(process.env.DEPLOY_API_SERVER) === "true") deployLabels.push("deploy:api-server");
-            if (String(process.env.DEPLOY_ADMIN_WEB) === "true") deployLabels.push("deploy:admin-web");
-            if (String(process.env.DEPLOY_CUSTOMER_WEB) === "true") deployLabels.push("deploy:customer-web");
-            if (String(process.env.DEPLOY_WORKER) === "true") deployLabels.push("deploy:worker");
-            if (String(process.env.DEPLOY_COUNSELING_ANALYTICS) === "true") deployLabels.push("deploy:counseling-analytics");
-            if (String(process.env.DEPLOY_RECOMMENDATION_REALTIME) === "true") deployLabels.push("deploy:recommendation-realtime");
-            if (String(process.env.DEPLOY_COUNSELING_BATCH) === "true") deployLabels.push("deploy:counseling-batch");
+            if (String(process.env.DEPLOY_API_SERVER)          === "true") deployLabels.push("deploy:api-server");
+            if (String(process.env.DEPLOY_ADMIN_WEB)           === "true") deployLabels.push("deploy:admin-web");
+            if (String(process.env.DEPLOY_CUSTOMER_WEB)        === "true") deployLabels.push("deploy:customer-web");
+            if (String(process.env.DEPLOY_WORKER)              === "true") deployLabels.push("deploy:worker");
+            if (String(process.env.DEPLOY_INTELLIGENCE_SERVER) === "true") deployLabels.push("deploy:intelligence-server");
 
             if (!owner || !repo) {
-              throw new Error(`invalid source repo. resolved=${sourceRepoRaw}`);
+              throw new Error(`invalid source repo. resolved from name=${sourceRepoName}`);
             }
 
             try {
               const existing = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-            
               core.notice(`Release already exists: ${existing.data.html_url}`);
               return;
             } catch (e) {
@@ -733,10 +663,7 @@ jobs:
                     }
                   }
 
-                  if (!shouldRetry || attempt === 3) {
-                    throw e;
-                  }
-
+                  if (!shouldRetry || attempt === 3) throw e;
                   core.warning(`createRelease attempt ${attempt} failed (${modeLabel}): ${message}. Retrying...`);
                   await sleep(attempt * 2000);
                 }
@@ -746,10 +673,7 @@ jobs:
             let created = null;
             try {
               created = await createReleaseWithRetries(
-                {
-                  ...baseCreateReleasePayload,
-                  generate_release_notes: true
-                },
+                { ...baseCreateReleasePayload, generate_release_notes: true },
                 "with generated notes"
               );
             } catch (e) {
@@ -758,10 +682,7 @@ jobs:
                 (typeof e.status === "number" && e.status >= 500) ||
                 /fetch failed|ECONNRESET|socket hang up|timed out/i.test(message);
 
-              if (!canFallback) {
-                throw e;
-              }
-
+              if (!canFallback) throw e;
               core.warning(`createRelease with generated notes failed after retries: ${message}. Falling back to plain release body.`);
               created = await createReleaseWithRetries(baseCreateReleasePayload, "without generated notes");
             }
@@ -787,32 +708,21 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - name: Resolve api-server source repository
-        id: resolve-api-repo
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "repo=${API_SERVER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout api-server
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-api-repo.outputs.repo }}
+          repository: ${{ env.API_SERVER_SOURCE_REPO }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is api-server
-        if: needs.resolve-context.outputs.source_sha != ''
+        if: needs.resolve-context.outputs.source_sha != '' && needs.resolve-context.outputs.source_repo_name == 'api-server'
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
-          DEFAULT_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
-            git checkout "$SOURCE_SHA"
-          fi
+          git checkout "$SOURCE_SHA"
 
       - name: Initialize CI postgres roles for api-server build
         shell: bash
@@ -898,32 +808,21 @@ jobs:
     needs: [resolve-context, create-tag]
     if: needs.resolve-context.outputs.deploy_admin_web == 'true'
     steps:
-      - name: Resolve admin-web source repository
-        id: resolve-admin-repo
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "repo=${ADMIN_WEB_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout admin-web
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-admin-repo.outputs.repo }}
+          repository: ${{ env.ADMIN_WEB_SOURCE_REPO }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is admin-web
-        if: needs.resolve-context.outputs.source_sha != ''
+        if: needs.resolve-context.outputs.source_sha != '' && needs.resolve-context.outputs.source_repo_name == 'admin-fe'
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
-          DEFAULT_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
-            git checkout "$SOURCE_SHA"
-          fi
+          git checkout "$SOURCE_SHA"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -953,7 +852,6 @@ jobs:
             docker push "${REPO}:${VERSION_TAG}"
           fi
 
-
   build-and-push-worker:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
@@ -971,32 +869,21 @@ jobs:
           fi
           echo "worker_repository=$worker_repository" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve worker source repository
-        id: resolve-worker-repo
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "repo=${WORKER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout worker
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-worker-repo.outputs.repo }}
+          repository: ${{ env.WORKER_SOURCE_REPO }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
       - name: Checkout source sha if source repo is worker
-        if: needs.resolve-context.outputs.source_sha != ''
+        if: needs.resolve-context.outputs.source_sha != '' && needs.resolve-context.outputs.source_repo_name == 'worker'
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
-          DEFAULT_REPO: ${{ env.WORKER_SOURCE_REPO }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO}" == "${DEFAULT_REPO}" ]]; then
-            git checkout "$SOURCE_SHA"
-          fi
+          git checkout "$SOURCE_SHA"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -1035,56 +922,37 @@ jobs:
             docker push "${REPO}:${WORKER_TAG}"
           fi
 
-
-  build-and-push-counseling-analytics:
+  # [CHANGE] build-and-push-counseling-analytics → build-and-push-intelligence-server
+  #          이미지 태그: counseling-analytics-${VER} → intelligence-server-${VER}
+  build-and-push-intelligence-server:
     runs-on: ubuntu-latest
     needs: [resolve-context, create-tag]
-    if: |
-      needs.resolve-context.outputs.deploy_recommendation_realtime == 'true' ||
-      needs.resolve-context.outputs.deploy_counseling_batch == 'true'
+    if: needs.resolve-context.outputs.deploy_intelligence_server == 'true'
     steps:
-      - name: Validate counseling analytics repository secret
+      - name: Validate intelligence server repository secret
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
-            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required for deploy:recommendation-server or deploy:analysis-server"
+            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required for deploy:intelligence-server"
             exit 1
           fi
 
-      - name: Resolve intelligence source repository
-        id: resolve-intelligence-repo
-        shell: bash
-        env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
-          INTELLIGENCE_SERVER_SOURCE_REPO: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
-        run: |
-          set -euo pipefail
-          if [[ "${SOURCE_REPO}" != "${INTELLIGENCE_SERVER_SOURCE_REPO}" ]]; then
-            echo "::error::Unsupported intelligence source repo: ${SOURCE_REPO}"
-            exit 1
-          fi
-          echo "repo=${INTELLIGENCE_SERVER_SOURCE_REPO}" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout intelligence source
+      - name: Checkout intelligence-server
         uses: actions/checkout@v4
         with:
-          repository: ${{ steps.resolve-intelligence-repo.outputs.repo }}
+          repository: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
           token: ${{ secrets.CENTRAL_REPO_TOKEN }}
           fetch-depth: 0
 
-      - name: Checkout source sha if source repo matches intelligence checkout
-        if: needs.resolve-context.outputs.source_sha != ''
+      - name: Checkout source sha if source repo is intelligence-server
+        if: needs.resolve-context.outputs.source_sha != '' && needs.resolve-context.outputs.source_repo_name == 'intelligence-server'
         shell: bash
         env:
-          SOURCE_REPO: ${{ needs.resolve-context.outputs.source_repo }}
           SOURCE_SHA: ${{ needs.resolve-context.outputs.source_sha }}
-          CHECKOUT_REPO: ${{ steps.resolve-intelligence-repo.outputs.repo }}
         run: |
           set -euo pipefail
-          if [[ "${SOURCE_REPO}" == "${CHECKOUT_REPO}" ]]; then
-            git checkout "$SOURCE_SHA"
-          fi
+          git checkout "$SOURCE_SHA"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -1095,7 +963,7 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push counseling analytics image
+      - name: Build and push intelligence-server image
         shell: bash
         env:
           VERSION_TAG: ${{ needs.create-tag.outputs.version_tag }}
@@ -1105,7 +973,8 @@ jobs:
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           REPO="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}"
-          IMAGE_TAG="counseling-analytics-${VERSION_TAG}"
+          # [CHANGE] 이미지 태그를 intelligence-server prefix로 통일
+          IMAGE_TAG="intelligence-server-${VERSION_TAG}"
 
           if ! aws ecr describe-repositories --repository-names "${COUNSELING_ANALYTICS_REPOSITORY}" >/dev/null 2>&1; then
             echo "Create ECR repository: ${COUNSELING_ANALYTICS_REPOSITORY}"
@@ -1115,7 +984,9 @@ jobs:
           if aws ecr describe-images --repository-name "${COUNSELING_ANALYTICS_REPOSITORY}" --image-ids imageTag="${IMAGE_TAG}" >/dev/null 2>&1; then
             echo "Skip push: ${REPO}:${IMAGE_TAG} already exists."
           else
-            docker build --platform linux/amd64               -t "${REPO}:${IMAGE_TAG}"               .
+            docker build --platform linux/amd64 \
+              -t "${REPO}:${IMAGE_TAG}" \
+              .
             docker push "${REPO}:${IMAGE_TAG}"
           fi
 
@@ -1128,7 +999,7 @@ jobs:
       - build-and-push-api-server
       - build-and-push-admin-web
       - build-and-push-worker
-      - build-and-push-counseling-analytics
+      - build-and-push-intelligence-server
 
     if: |
       always() &&
@@ -1138,12 +1009,11 @@ jobs:
       (needs.build-and-push-api-server.result == 'success' || needs.build-and-push-api-server.result == 'skipped') &&
       (needs.build-and-push-admin-web.result == 'success' || needs.build-and-push-admin-web.result == 'skipped') &&
       (needs.build-and-push-worker.result == 'success' || needs.build-and-push-worker.result == 'skipped') &&
-      (needs.build-and-push-counseling-analytics.result == 'success' || needs.build-and-push-counseling-analytics.result == 'skipped') &&
+      (needs.build-and-push-intelligence-server.result == 'success' || needs.build-and-push-intelligence-server.result == 'skipped') &&
       (
         needs.resolve-context.outputs.deploy_api_server == 'true' ||
         needs.resolve-context.outputs.deploy_admin_web == 'true' ||
-        needs.resolve-context.outputs.deploy_customer_web == 'true' ||
-        needs.resolve-context.outputs.deploy_recommendation_realtime == 'true'
+        needs.resolve-context.outputs.deploy_customer_web == 'true'
       )
     steps:
       - name: Checkout infra repo
@@ -1178,22 +1048,16 @@ jobs:
           RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
           DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
           DEPLOY_ADMIN_WEB: ${{ needs.resolve-context.outputs.deploy_admin_web }}
-          DEPLOY_RECOMMENDATION_REALTIME: ${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}
         run: |
           set -euo pipefail
 
-          # 최신 ECR release tag 선택 로직을 워크플로우 밖 스크립트로 분리해
-          # 수동/로컬 배포에서도 같은 규칙을 재사용한다.
           source <(
             AWS_REGION="$AWS_REGION" \
             ADMIN_WEB_REPOSITORY="$ADMIN_WEB_REPOSITORY" \
             API_SERVER_REPOSITORY="$API_SERVER_REPOSITORY" \
-            COUNSELING_ANALYTICS_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY:-}" \
-            COUNSELING_ANALYTICS_SOURCE_REPO="${COUNSELING_ANALYTICS_SOURCE_REPO:-}" \
             RELEASE_TAG="$RELEASE_TAG" \
             DEPLOY_ADMIN_WEB="$DEPLOY_ADMIN_WEB" \
             DEPLOY_API_SERVER="$DEPLOY_API_SERVER" \
-            DEPLOY_RECOMMENDATION_REALTIME="$DEPLOY_RECOMMENDATION_REALTIME" \
             "$GITHUB_WORKSPACE/scripts/resolve-ecs-image-tags.sh" --format shell
           )
 
@@ -1230,7 +1094,6 @@ jobs:
             echo "admin_web_image_tag=$ADMIN_WEB_IMAGE_TAG"
             echo "admin_api_image_tag=$ADMIN_API_IMAGE_TAG"
             echo "customer_api_image_tag=$CUSTOMER_API_IMAGE_TAG"
-            echo "recommendation_realtime_image_tag=$RECOMMENDATION_REALTIME_IMAGE_TAG"
           } >> "$GITHUB_OUTPUT"
 
           cdk deploy EcsClusterStack --exclusively --require-approval never
@@ -1241,12 +1104,10 @@ jobs:
           echo "deploy_api_server=${{ needs.resolve-context.outputs.deploy_api_server }}"
           echo "deploy_admin_web=${{ needs.resolve-context.outputs.deploy_admin_web }}"
           echo "deploy_customer_web=${{ needs.resolve-context.outputs.deploy_customer_web }}"
-          echo "deploy_recommendation_realtime=${{ needs.resolve-context.outputs.deploy_recommendation_realtime }}"
-          echo "deploy_counseling_batch=${{ needs.resolve-context.outputs.deploy_counseling_batch }}"
+          echo "deploy_intelligence_server=${{ needs.resolve-context.outputs.deploy_intelligence_server }}"
           echo "admin_api_image_tag=${{ steps.deploy-ecs.outputs.admin_api_image_tag }}"
           echo "customer_api_image_tag=${{ steps.deploy-ecs.outputs.customer_api_image_tag }}"
           echo "admin_web_image_tag=${{ steps.deploy-ecs.outputs.admin_web_image_tag }}"
-          echo "recommendation_realtime_image_tag=${{ steps.deploy-ecs.outputs.recommendation_realtime_image_tag }}"
 
   run-worker-task:
     runs-on: ubuntu-latest
@@ -1255,8 +1116,6 @@ jobs:
       - create-tag
       - build-and-push-worker
       - deploy-ecs
-    # deploy:worker 시 task definition revision은 항상 갱신하고,
-    # CI 직접 실행은 CI_RUN_WORKER_TASK=true일 때만 추가로 수행한다.
     if: |
       always() &&
       needs.resolve-context.outputs.deploy_worker == 'true' &&
@@ -1406,7 +1265,11 @@ jobs:
 
           container_name="${WORKER_CONTAINER_NAME:-worker}"
 
-          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+          taskdef_json="$(aws ecs describe-task-definition \
+            --region "$AWS_REGION" \
+            --task-definition "$source_taskdef" \
+            --query 'taskDefinition' \
+            --output json)"
 
           task_role_arn="$(echo "$taskdef_json" | jq -r '.taskRoleArn // empty')"
           if [ -z "$task_role_arn" ]; then
@@ -1425,7 +1288,10 @@ jobs:
             effective_container_name="$fallback_container_name"
           fi
 
-          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$WORKER_IMAGE"             --arg cname "$effective_container_name"             '
+          new_taskdef_json="$(echo "$taskdef_json" | jq \
+            --arg img "$WORKER_IMAGE" \
+            --arg cname "$effective_container_name" \
+            '
             .containerDefinitions |= (
               if any(.[]; .name == $cname)
               then map(if .name == $cname then .image = $img else . end)
@@ -1443,7 +1309,11 @@ jobs:
               )
             ' )"
 
-          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+          new_taskdef_arn="$(aws ecs register-task-definition \
+            --region "$AWS_REGION" \
+            --cli-input-json "$new_taskdef_json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
             echo "::error::Failed to register worker task definition revision."
@@ -1465,7 +1335,11 @@ jobs:
 
           cluster_name="${WORKER_CLUSTER_NAME:-}"
           if [ -z "$cluster_name" ]; then
-            cluster_name="$(aws cloudformation describe-stack-resources               --region "$AWS_REGION"               --stack-name EcsClusterStack               --query "StackResources[?ResourceType=='AWS::ECS::Cluster']|[0].PhysicalResourceId"               --output text 2>/dev/null || true)"
+            cluster_name="$(aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Cluster']|[0].PhysicalResourceId" \
+              --output text 2>/dev/null || true)"
           fi
 
           if [ -z "$cluster_name" ] || [ "$cluster_name" = "None" ]; then
@@ -1500,7 +1374,12 @@ jobs:
             service_cluster="$(echo "$service_arn" | awk -F'/' '{print $(NF-1)}')"
             service_name="$(echo "$service_arn" | awk -F'/' '{print $NF}')"
 
-            awsvpc_json="$(aws ecs describe-services               --region "$AWS_REGION"               --cluster "$service_cluster"               --services "$service_name"               --query 'services[0].networkConfiguration.awsvpcConfiguration'               --output json)"
+            awsvpc_json="$(aws ecs describe-services \
+              --region "$AWS_REGION" \
+              --cluster "$service_cluster" \
+              --services "$service_name" \
+              --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+              --output json)"
 
             subnet_csv="$(echo "$awsvpc_json" | jq -r '.subnets | join(",")')"
             sg_csv="$(echo "$awsvpc_json" | jq -r '.securityGroups | join(",")')"
@@ -1534,7 +1413,6 @@ jobs:
             exit 1
           fi
 
-          # 브로커 endpoint는 자격 증명은 아니지만, Actions 로그에서 우발적으로 드러나지 않도록 마스킹한다.
           echo "::add-mask::$msk_bootstrap_brokers"
 
           run_overrides="$(jq -cn \
@@ -1560,7 +1438,16 @@ jobs:
             }'
           )"
 
-          run_result="$(aws ecs run-task             --region "$AWS_REGION"             --cluster "$cluster_name"             --launch-type FARGATE             --task-definition "$new_taskdef_arn"             --started-by "$run_started_by"             --overrides "$run_overrides"             --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}"             --query '{tasks:tasks[].taskArn,failures:failures}'             --output json)"
+          run_result="$(aws ecs run-task \
+            --region "$AWS_REGION" \
+            --cluster "$cluster_name" \
+            --launch-type FARGATE \
+            --task-definition "$new_taskdef_arn" \
+            --started-by "$run_started_by" \
+            --overrides "$run_overrides" \
+            --network-configuration "awsvpcConfiguration={subnets=[${subnet_csv}],securityGroups=[${sg_csv}],assignPublicIp=${assign_public_ip}}" \
+            --query '{tasks:tasks[].taskArn,failures:failures}' \
+            --output json)"
 
           echo "$run_result"
 
@@ -1695,25 +1582,27 @@ jobs:
             exit 1
           fi
 
-  deploy-counseling-analytics-service:
+  # [CHANGE] deploy-counseling-analytics-service → deploy-intelligence-server-service
+  #          단일 ECS 서비스 업데이트로 통합 (recommendation-realtime + analysis-batch 분리 제거)
+  deploy-intelligence-server-service:
     runs-on: ubuntu-latest
     needs:
       - resolve-context
       - create-tag
-      - build-and-push-counseling-analytics
+      - build-and-push-intelligence-server
       - deploy-ecs
     if: |
       always() &&
-      needs.resolve-context.outputs.deploy_recommendation_realtime == 'true' &&
-      needs.resolve-context.outputs.can_deploy_counseling_service == 'true' &&
+      needs.resolve-context.outputs.deploy_intelligence_server == 'true' &&
+      needs.resolve-context.outputs.can_deploy_intelligence_service == 'true' &&
       needs.resolve-context.result == 'success' &&
       needs.create-tag.result == 'success' &&
-      needs.build-and-push-counseling-analytics.result == 'success' &&
+      needs.build-and-push-intelligence-server.result == 'success' &&
       (needs.deploy-ecs.result == 'success' || needs.deploy-ecs.result == 'skipped')
     outputs:
-      counseling_service_name: ${{ steps.deploy-service.outputs.counseling_service_name }}
-      counseling_task_definition: ${{ steps.deploy-service.outputs.counseling_task_definition }}
-      counseling_image: ${{ steps.deploy-service.outputs.counseling_image }}
+      intelligence_service_name: ${{ steps.deploy-service.outputs.intelligence_service_name }}
+      intelligence_task_definition: ${{ steps.deploy-service.outputs.intelligence_task_definition }}
+      intelligence_image: ${{ steps.deploy-service.outputs.intelligence_image }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -1721,7 +1610,7 @@ jobs:
           role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Register task definition revision and update counseling analytics service
+      - name: Register task definition revision and update intelligence-server service
         id: deploy-service
         shell: bash
         env:
@@ -1748,110 +1637,8 @@ jobs:
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
-
-          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
-          if [ -z "$source_taskdef" ]; then
-            if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
-              echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
-              exit 1
-            fi
-            source_taskdef="$(aws ecs list-task-definitions               --region "$AWS_REGION"               --family-prefix "$COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"               --sort DESC               --max-items 1               --query 'taskDefinitionArns[0]'               --output text 2>/dev/null || true)"
-          fi
-          source_taskdef="$(normalize_aws_text_scalar "$source_taskdef")"
-
-          if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
-            echo "::error::Could not resolve task definition for counseling analytics"
-            exit 1
-          fi
-
-          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-counseling-analytics}"
-
-          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
-
-          new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$IMAGE_URI"             --arg cname "$container_name"             '
-            .containerDefinitions |= (
-              if any(.[]; .name == $cname)
-              then map(if .name == $cname then .image = $img else . end)
-              else (.[0].image = $img | .)
-              end
-            )
-            | del(
-                .taskDefinitionArn,
-                .revision,
-                .status,
-                .requiresAttributes,
-                .compatibilities,
-                .registeredAt,
-                .registeredBy
-              )
-            ' )"
-
-          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
-          new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
-
-          if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
-            echo "::error::Failed to register task definition revision"
-            exit 1
-          fi
-
-          aws ecs update-service             --region "$AWS_REGION"             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME"             --service "$COUNSELING_ANALYTICS_SERVICE_NAME"             --task-definition "$new_taskdef_arn"             --force-new-deployment >/dev/null
-
-          aws ecs wait services-stable             --region "$AWS_REGION"             --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME"             --services "$COUNSELING_ANALYTICS_SERVICE_NAME"
-
-          {
-            echo "counseling_service_name=$COUNSELING_ANALYTICS_SERVICE_NAME"
-            echo "counseling_task_definition=$new_taskdef_arn"
-            echo "counseling_image=$IMAGE_URI"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Summary
-        run: |
-          echo "service=${{ steps.deploy-service.outputs.counseling_service_name }}"
-          echo "task_definition=${{ steps.deploy-service.outputs.counseling_task_definition }}"
-          echo "image=${{ steps.deploy-service.outputs.counseling_image }}"
-
-  register-counseling-analytics-batch-task-definition:
-    runs-on: ubuntu-latest
-    needs:
-      - resolve-context
-      - create-tag
-      - create-github-release
-      - build-and-push-counseling-analytics
-    if: |
-      always() &&
-      needs.resolve-context.outputs.deploy_counseling_batch == 'true' &&
-      needs.resolve-context.outputs.deploy_recommendation_realtime != 'true' &&
-      needs.resolve-context.result == 'success' &&
-      needs.create-tag.result == 'success' &&
-      needs.create-github-release.result == 'success' &&
-      needs.build-and-push-counseling-analytics.result == 'success'
-    outputs:
-      counseling_batch_task_definition: ${{ steps.register-taskdef.outputs.counseling_batch_task_definition }}
-      counseling_batch_image: ${{ steps.register-taskdef.outputs.counseling_batch_image }}
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Register task definition revision for analysis batch
-        id: register-taskdef
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
-        run: |
-          set -euo pipefail
-
-          normalize_aws_text_scalar() {
-            printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
-          }
-
-          if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
-            echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
-            exit 1
-          fi
+          # [CHANGE] intelligence-server prefix로 통일된 이미지 태그 사용
+          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:intelligence-server-${RELEASE_TAG}"
 
           source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
           if [ -z "$source_taskdef" ]; then
@@ -1870,14 +1657,11 @@ jobs:
           source_taskdef="$(normalize_aws_text_scalar "$source_taskdef")"
 
           if [ -z "$source_taskdef" ] || [ "$source_taskdef" = "None" ]; then
-            echo "::error::Could not resolve task definition for analysis batch"
+            echo "::error::Could not resolve task definition for intelligence-server"
             exit 1
           fi
 
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
-          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
+          container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-intelligence-server}"
 
           taskdef_json="$(aws ecs describe-task-definition \
             --region "$AWS_REGION" \
@@ -1914,16 +1698,30 @@ jobs:
           new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
-            echo "::error::Failed to register analysis batch task definition revision"
+            echo "::error::Failed to register task definition revision"
             exit 1
           fi
 
+          aws ecs update-service \
+            --region "$AWS_REGION" \
+            --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
+            --service "$COUNSELING_ANALYTICS_SERVICE_NAME" \
+            --task-definition "$new_taskdef_arn" \
+            --force-new-deployment >/dev/null
+
+          aws ecs wait services-stable \
+            --region "$AWS_REGION" \
+            --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
+            --services "$COUNSELING_ANALYTICS_SERVICE_NAME"
+
           {
-            echo "counseling_batch_task_definition=$new_taskdef_arn"
-            echo "counseling_batch_image=$IMAGE_URI"
+            echo "intelligence_service_name=$COUNSELING_ANALYTICS_SERVICE_NAME"
+            echo "intelligence_task_definition=$new_taskdef_arn"
+            echo "intelligence_image=$IMAGE_URI"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
         run: |
-          echo "analysis_batch_task_definition=${{ steps.register-taskdef.outputs.counseling_batch_task_definition }}"
-          echo "analysis_batch_image=${{ steps.register-taskdef.outputs.counseling_batch_image }}"
+          echo "service=${{ steps.deploy-service.outputs.intelligence_service_name }}"
+          echo "task_definition=${{ steps.deploy-service.outputs.intelligence_task_definition }}"
+          echo "image=${{ steps.deploy-service.outputs.intelligence_image }}"
