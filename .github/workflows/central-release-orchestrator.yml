@@ -133,6 +133,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+  PINPOINT_ECS_ENABLE: "false"
   # Required CDK app envs
   REGION: ${{ secrets.AWS_REGION }}
   ADMIN_ALLOWED_CIDRS: ${{ secrets.ADMIN_ALLOWED_CIDRS }}
@@ -1076,6 +1077,13 @@ jobs:
                 else (.[0].image = $img | .)
                 end
               )
+              | .containerDefinitions |= map(select(.name != "PinpointAgentInit"))
+              | .containerDefinitions |= map(
+                  .dependsOn = ((.dependsOn // []) | map(select(.containerName != "PinpointAgentInit")))
+                  | .mountPoints = ((.mountPoints // []) | map(select(.sourceVolume != "PinpointAgentVolume")))
+                  | .environment = ((.environment // []) | map(select(.name != "JAVA_TOOL_OPTIONS")))
+                )
+              | .volumes = ((.volumes // []) | map(select(.name != "PinpointAgentVolume")))
               | del(.taskDefinitionArn, .revision, .status,
                     .requiresAttributes, .compatibilities,
                     .registeredAt, .registeredBy)

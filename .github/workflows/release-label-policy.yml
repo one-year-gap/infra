@@ -30,12 +30,7 @@ jobs:
               "deploy:api-server",
               "deploy:customer-web",
               "deploy:worker",
-              "deploy:recommendation-server",
-              "deploy:analysis-server",
-              // Backward compatibility for existing PR labels during migration.
-              "deploy:counseling-analytics",
-              "deploy:recommendation-realtime",
-              "deploy:counseling-batch"
+              "deploy:intelligence-server"
             ];
 
             const selectedRelease = releaseLabels.filter(l => labels.includes(l));

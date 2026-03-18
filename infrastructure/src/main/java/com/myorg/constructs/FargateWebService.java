@@ -15,6 +15,7 @@ import software.amazon.awscdk.services.logs.LogGroup;
 import software.constructs.Construct;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -74,6 +75,10 @@ public class FargateWebService extends Construct {
         /**
          * 2) Container 추가
          */
+        Map<String, String> environment = new LinkedHashMap<>();
+        environment.put(PORT, String.valueOf(props.containerPort()));
+        environment.putAll(props.environment());
+
         this.containerDefinition = taskDefinition.addContainer(CONTAINER_ID,
                 ContainerDefinitionOptions.builder()
                         //image: ECR 레포에서 imageTag를 가져와 container 실행
@@ -83,9 +88,7 @@ public class FargateWebService extends Construct {
                                 .logGroup(props.logGroup())
                                 .streamPrefix(props.logStreamPrefix())
                                 .build()))
-                        .environment(Map.of(
-                                PORT, String.valueOf(props.containerPort())
-                        ))
+                        .environment(environment)
                         .build()
         );
 

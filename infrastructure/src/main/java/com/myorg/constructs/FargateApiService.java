@@ -1,6 +1,5 @@
 package com.myorg.constructs;
 
-import com.myorg.config.AppConfig;
 import com.myorg.config.ContainerConfig;
 import com.myorg.props.FargateApiServiceProps;
 import software.amazon.awscdk.Duration;
@@ -12,7 +11,6 @@ import software.constructs.Construct;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -247,53 +245,7 @@ public class FargateApiService extends Construct {
     }
 
     private PinpointSettings resolvePinpointSettings(FargateApiServiceProps props) {
-        boolean enabled = Boolean.parseBoolean(AppConfig.getOptionalValueOrDefault("PINPOINT_ECS_ENABLE", "false"));
-        if (!enabled) {
-            return PinpointSettings.disabled();
-        }
-
-        String collectorHost = AppConfig.getOptionalValueOrDefault("PINPOINT_COLLECTOR_HOST", "");
-        if (collectorHost.isBlank()) {
-            return PinpointSettings.disabled();
-        }
-
-        String agentImage = AppConfig.getOptionalValueOrDefault("PINPOINT_AGENT_IMAGE", "pinpointdocker/pinpoint-agent:3.0.4");
-        String agentMountPath = AppConfig.getOptionalValueOrDefault("PINPOINT_AGENT_MOUNT_PATH", "/opt/pinpoint-agent");
-        String bootstrapJar = AppConfig.getOptionalValueOrDefault("PINPOINT_AGENT_BOOTSTRAP_JAR", "pinpoint-bootstrap.jar");
-
-        String profilePrefix = "PINPOINT_" + props.springProfile().toUpperCase(Locale.ROOT);
-        String applicationName = AppConfig.getOptionalValueOrDefault(
-                profilePrefix + "_APPLICATION_NAME",
-                props.logStreamPrefix()
-        );
-        String agentId = AppConfig.getOptionalValueOrDefault(
-                profilePrefix + "_AGENT_ID",
-                applicationName
-        );
-
-        String agentPort = AppConfig.getOptionalValueOrDefault("PINPOINT_COLLECTOR_AGENT_PORT", "9991");
-        String metadataPort = AppConfig.getOptionalValueOrDefault("PINPOINT_COLLECTOR_METADATA_PORT", agentPort);
-        String statPort = AppConfig.getOptionalValueOrDefault("PINPOINT_COLLECTOR_STAT_PORT", "9992");
-        String spanPort = AppConfig.getOptionalValueOrDefault("PINPOINT_COLLECTOR_SPAN_PORT", "9993");
-
-        String javaToolOptions = String.join(" ",
-                "-javaagent:" + agentMountPath + "/" + bootstrapJar,
-                "-Dpinpoint.applicationName=" + applicationName,
-                "-Dpinpoint.agentId=" + agentId,
-                "-Dprofiler.transport.module=GRPC",
-                "-Dprofiler.transport.grpc.collector.ip=" + collectorHost,
-                "-Dprofiler.transport.grpc.agent.collector.port=" + agentPort,
-                "-Dprofiler.transport.grpc.metadata.collector.port=" + metadataPort,
-                "-Dprofiler.transport.grpc.stat.collector.port=" + statPort,
-                "-Dprofiler.transport.grpc.span.collector.port=" + spanPort,
-                "-Dprofiler.sampling.type=COUNTING",
-                "-Dprofiler.sampling.counting.sampling-rate=1",
-                "-Dprofiler.sampling.percent.sampling-rate=100",
-                "-Dprofiler.sampling.new.throughput=0",
-                "-Dprofiler.sampling.continue.throughput=0"
-        );
-
-        return new PinpointSettings(true, agentImage, agentMountPath, javaToolOptions);
+        return PinpointSettings.disabled();
     }
 
     private record PinpointSettings(

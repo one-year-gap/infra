@@ -45,8 +45,7 @@ public class EcsClusterStack extends Stack {
 
     private final FargateApiService customerApiService;
     private final FargateApiService adminApiService;
-    private final FargateBackgroundService recommendationRealtimeService;
-    private final FargateBackgroundService analysisServerService;
+    private final FargateBackgroundService intelligenceServerService;
     private final FargateBackgroundService logServerService;
     private final FargateWebService adminWebService;
 
@@ -70,10 +69,8 @@ public class EcsClusterStack extends Stack {
     private static final String CUSTOMER_API_ID = "CustomerApi";
     private static final String CUSTOMER_API_LOG_STREAM_PREFIX = "customer-api";
 
-    private static final String RECOMMENDATION_REALTIME_ID = "RecommendationRealtime";
-    private static final String RECOMMENDATION_REALTIME_LOG_STREAM_PREFIX = "recommendation-realtime";
-    private static final String ANALYSIS_SERVER_ID = "AnalysisServer";
-    private static final String ANALYSIS_SERVER_LOG_STREAM_PREFIX = "analysis-server";
+    private static final String INTELLIGENCE_SERVER_ID = "IntelligenceServer";
+    private static final String INTELLIGENCE_SERVER_LOG_STREAM_PREFIX = "intelligence-server";
     private static final String LOG_SERVER_ID = "LogServer";
     private static final String LOG_SERVER_LOG_STREAM_PREFIX = "log-server";
     private static final String ERROR_LOG_TOPIC = "error-logs";
@@ -259,7 +256,8 @@ public class EcsClusterStack extends Stack {
                 ADMIN_WEB_LOG_STREAM_PREFIX,
                 privateSubnets,
                 DESIRED_COUNT,
-                false
+                false,
+                buildAdminWebEnvironment(adminApiPort)
         );
         FargateApiServiceProps adminApiServiceProps = new FargateApiServiceProps(
                 this,
@@ -309,23 +307,14 @@ public class EcsClusterStack extends Stack {
                 mergePolicies(customerApiExtraTaskPolicies, mskTaskPolicies)
         );
 
-        int recommendationRealtimePort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT));
-        int recommendationRealtimeDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_DESIRED_COUNT));
-        int analysisServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_PORT));
-        int analysisServerDesiredCount = kafkaEnabled
-                ? Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_DESIRED_COUNT))
-                : 0;
+        int intelligenceServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_PORT));
+        int intelligenceServerDesiredCount = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_DESIRED_COUNT));
         int logServerPort = Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_PORT));
         int logServerDesiredCount = kafkaEnabled
                 ? Integer.parseInt(AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_DESIRED_COUNT))
                 : 0;
-        Map<String, String> recommendationRealtimeEnvironment = buildRecommendationRealtimeEnvironment(
-                recommendationRealtimePort,
-                adminApiPort,
-                mskBootstrapBrokersSaslIam
-        );
-        Map<String, String> analysisServerEnvironment = buildAnalysisServerEnvironment(
-                analysisServerPort,
+        Map<String, String> intelligenceServerEnvironment = buildIntelligenceServerEnvironment(
+                intelligenceServerPort,
                 adminApiPort,
                 mskBootstrapBrokersSaslIam
         );
@@ -335,56 +324,29 @@ public class EcsClusterStack extends Stack {
                 mskBootstrapBrokersSaslIam
         );
 
-        FargateBackgroundServiceProps recommendationRealtimeServiceProps = new FargateBackgroundServiceProps(
+        FargateBackgroundServiceProps intelligenceServerServiceProps = new FargateBackgroundServiceProps(
                 this,
-                RECOMMENDATION_REALTIME_ID,
-                cluster,
-                recommendationRealtimeRepo,
-                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG),
-                recommendationRealtimeSg,
-                recommendationRealtimeLogGroup,
-                RECOMMENDATION_REALTIME_LOG_STREAM_PREFIX,
-                privateSubnets,
-                null,
-                512,
-                1024,
-                recommendationRealtimeDesiredCount,
-                true,
-                recommendationRealtimeEnvironment,
-                kafkaEnabled ? recommendationRealtimeHotfixEntryPoint() : List.of(),
-                kafkaEnabled ? recommendationRealtimeHotfixCommand() : List.of(),
-                recommendationRealtimePort,
-                recommendationRealtimeRuntimeSecret,
-                buildRecommendationRuntimeSecretMapping(),
-                serviceNs,
-                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_CLOUD_MAP_NAME),
-                List.of(),
-                mskTaskPolicies
-        );
-
-        FargateBackgroundServiceProps analysisServerServiceProps = new FargateBackgroundServiceProps(
-                this,
-                ANALYSIS_SERVER_ID,
+                INTELLIGENCE_SERVER_ID,
                 cluster,
                 recommendationRealtimeRepo,
                 AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG),
                 analysisServerSg,
-                analysisServerLogGroup,
-                ANALYSIS_SERVER_LOG_STREAM_PREFIX,
+                recommendationRealtimeLogGroup,
+                INTELLIGENCE_SERVER_LOG_STREAM_PREFIX,
                 privateSubnets,
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_SERVICE_NAME),
+                AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_CLOUD_MAP_NAME),
                 512,
                 1024,
-                analysisServerDesiredCount,
+                intelligenceServerDesiredCount,
                 true,
-                analysisServerEnvironment,
+                intelligenceServerEnvironment,
                 List.of(),
                 List.of(),
-                analysisServerPort,
+                intelligenceServerPort,
                 recommendationRealtimeRuntimeSecret,
                 buildAnalysisServerRuntimeSecretMapping(),
                 serviceNs,
-                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_CLOUD_MAP_NAME),
+                AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_CLOUD_MAP_NAME),
                 List.of(),
                 mskTaskPolicies
         );
@@ -435,12 +397,11 @@ public class EcsClusterStack extends Stack {
         this.customerApiService = new FargateApiService(customerApiServiceProps);
 
         /**
-         * 12) Recommendation Realtime - Python internal service
+         * 12) Unified Intelligence Server - Python internal service
          * batch는 같은 레포/이미지를 쓰더라도 상시 Service로 올리지 않고
          * EventBridge/StepFunctions가 1회성 Task를 실행하는 방향으로 분리한다.
          */
-        this.recommendationRealtimeService = new FargateBackgroundService(recommendationRealtimeServiceProps);
-        this.analysisServerService = new FargateBackgroundService(analysisServerServiceProps);
+        this.intelligenceServerService = new FargateBackgroundService(intelligenceServerServiceProps);
         this.logServerService = new FargateBackgroundService(logServerServiceProps);
     }
 
@@ -481,15 +442,31 @@ public class EcsClusterStack extends Stack {
     }
 
     public FargateBackgroundService getRecommendationRealtimeService() {
-        return recommendationRealtimeService;
+        return intelligenceServerService;
     }
 
     public FargateBackgroundService getAnalysisServerService() {
-        return analysisServerService;
+        return intelligenceServerService;
+    }
+
+    public FargateBackgroundService getIntelligenceServerService() {
+        return intelligenceServerService;
     }
 
     public FargateBackgroundService getLogServerService() {
         return logServerService;
+    }
+
+    /**
+     * admin-web 서버 런타임이 내부 admin-api를 프록시 호출할 수 있도록 환경값을 주입한다.
+     */
+    private Map<String, String> buildAdminWebEnvironment(int adminApiPort) {
+        Map<String, String> env = new HashMap<>();
+        env.put(
+                "ADMIN_API_BASE_URL",
+                "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
+        );
+        return env;
     }
 
     /**
@@ -516,12 +493,12 @@ public class EcsClusterStack extends Stack {
             // IAM 콜백 핸들러
             env.put("KAFKA_SASL_CALLBACK_HANDLER_CLASS", "software.amazon.msk.auth.iam.IAMClientCallbackHandler");
         }
-        // admin-api는 private recommendation service를 내부 DNS로 호출한다.
+        // admin-api는 unified intelligence-server를 내부 DNS로 호출한다.
         env.put(
                 "FASTAPI_BASE_URL",
-                "http://" + AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_CLOUD_MAP_NAME) + "."
+                "http://" + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_CLOUD_MAP_NAME) + "."
                         + AppConfig.getInternalDomainName() + ":"
-                        + AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_PORT)
+                        + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_PORT)
         );
         return env;
     }
@@ -562,97 +539,114 @@ public class EcsClusterStack extends Stack {
     }
 
     /**
-     * realtime 서비스 환경값 구성.
+     * unified intelligence-server 환경값 구성.
      */
-    private Map<String, String> buildRecommendationRealtimeEnvironment(
-            int recommendationRealtimePort,
+    private Map<String, String> buildIntelligenceServerEnvironment(
+            int intelligenceServerPort,
             int adminApiPort,
             String mskBootstrapBrokersSaslIam
     ) {
         Map<String, String> env = new HashMap<>();
-        env.put("APP_MODE", "realtime");
+        env.put("APP_MODE", "server");
         env.put("APP_ENV", "prod");
         env.put("DEBUG", "false");
-        env.put("APP_PORT", String.valueOf(recommendationRealtimePort));
+        env.put("APP_PORT", String.valueOf(intelligenceServerPort));
         env.put("PYTHONUNBUFFERED", "1");
-        env.put("KAFKA_CONSUMER_ENABLED", "false");
+        env.put(
+                "KAFKA_CONSUMER_ENABLED",
+                hasText(mskBootstrapBrokersSaslIam)
+                        ? AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_ENABLED)
+                        : "false"
+        );
         if (hasText(mskBootstrapBrokersSaslIam)) {
-            // realtime 모드도 추천 결과를 Kafka에 발행하므로 bootstrap/config 기본값으로 떨어지지 않게 명시한다.
             env.put("KAFKA_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
             env.put("MSK_BOOTSTRAP_SERVERS", mskBootstrapBrokersSaslIam);
             env.put("KAFKA_SECURITY_PROTOCOL", "SASL_SSL");
             env.put("KAFKA_SASL_MECHANISM", "OAUTHBEARER");
             env.put("KAFKA_AWS_REGION", AppConfig.getRegion());
             env.put(
+                    "KAFKA_ANALYSIS_REQUEST_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_REQUEST_TOPIC)
+            );
+            env.put(
+                    "KAFKA_ANALYSIS_RESPONSE_TOPIC",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_ANALYSIS_RESPONSE_TOPIC)
+            );
+            env.put(
+                    "KAFKA_CONSUMER_GROUP_ID",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_CONSUMER_GROUP_ID)
+            );
+            env.put(
+                    "KAFKA_AUTO_OFFSET_RESET",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_AUTO_OFFSET_RESET)
+            );
+            env.put(
+                    "KAFKA_MAX_POLL_INTERVAL_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_MAX_POLL_INTERVAL_MS)
+            );
+            env.put(
+                    "KAFKA_SESSION_TIMEOUT_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_SESSION_TIMEOUT_MS)
+            );
+            env.put(
+                    "KAFKA_HEARTBEAT_INTERVAL_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_HEARTBEAT_INTERVAL_MS)
+            );
+            env.put(
+                    "KAFKA_BATCH_SIZE",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_BATCH_SIZE)
+            );
+            env.put(
+                    "KAFKA_POLL_TIMEOUT_MS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_POLL_TIMEOUT_MS)
+            );
+            env.put(
+                    "KAFKA_LOG_EACH_MESSAGE",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_EACH_MESSAGE)
+            );
+            env.put(
+                    "KAFKA_LOG_RESULT_LIMIT",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_LOG_RESULT_LIMIT)
+            );
+            env.put(
+                    "KAFKA_RESPONSE_MAX_ATTEMPTS",
+                    AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RESPONSE_MAX_ATTEMPTS)
+            );
+            env.put(
                     "KAFKA_RECOMMENDATION_TOPIC",
                     AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_KAFKA_RECOMMENDATION_TOPIC)
             );
         }
 
-        env.put("POSTGRES_POOL_MIN_SIZE", "1");
-        env.put("POSTGRES_POOL_MAX_SIZE", "2");
+        env.put(
+                "POSTGRES_POOL_MIN_SIZE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_POSTGRES_POOL_MIN_SIZE)
+        );
+        env.put(
+                "POSTGRES_POOL_MAX_SIZE",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_POSTGRES_POOL_MAX_SIZE)
+        );
         env.put(
                 "OPENAI_CHAT_MODEL",
-                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_OPENAI_CHAT_MODEL)
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_OPENAI_CHAT_MODEL)
         );
         env.put(
                 "OPENAI_EMBEDDING_MODEL",
-                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_OPENAI_EMBEDDING_MODEL)
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_OPENAI_EMBEDDING_MODEL)
+        );
+        env.put(
+                "RECOMMEND_TOP_K",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_RECOMMEND_TOP_K)
+        );
+        env.put(
+                "CACHE_TTL_DAYS",
+                AppConfig.getValueOrDefault(EnvKey.ANALYSIS_SERVER_CACHE_TTL_DAYS)
         );
         env.put(
                 "ADMIN_API_BASE_URL",
                 "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
         );
         return env;
-    }
-
-    /**
-     * 배포된 recommendation image에 producer IAM 옵션 반영 전까지 startup patch를 적용한다.
-     */
-    private List<String> recommendationRealtimeHotfixEntryPoint() {
-        return List.of("/bin/sh", "-lc");
-    }
-
-    /**
-     * recommendation producer가 localhost 기본값으로 떨어지지 않도록 컨테이너 시작 시 patch한다.
-     */
-    private List<String> recommendationRealtimeHotfixCommand() {
-        return List.of("""
-                echo '[hotfix] patching recommendation_service.py for MSK IAM auth'
-                python - <<'PY'
-                from pathlib import Path
-                import re
-
-                p = Path("/app/app/services/recommendation_service.py")
-                s = p.read_text()
-                imp_old = "from aiokafka import AIOKafkaProducer\\n"
-                imp_new = "from aiokafka import AIOKafkaProducer\\n\\nfrom app.infra.kafka.client_options import build_kafka_client_options\\n"
-                pattern = re.compile(
-                    r"    producer = AIOKafkaProducer\\(\\n"
-                    r"(?:        bootstrap_servers=\\[s\\.strip\\(\\) for s in bootstrap\\.split\\(\",\"\\) if s\\.strip\\(\\)\\],\\n)?"
-                    r"        value_serializer=lambda v: json\\.dumps\\(v, ensure_ascii=False\\)\\.encode\\(\"utf-8\"\\),\\n"
-                    r"    \\)\\n",
-                    re.MULTILINE,
-                )
-                replacement = (
-                    "    producer = AIOKafkaProducer(\\n"
-                    "        value_serializer=lambda v: json.dumps(v, ensure_ascii=False).encode(\\"utf-8\\"),\\n"
-                    "        **build_kafka_client_options(settings),\\n"
-                    "    )\\n"
-                )
-
-                if "from app.infra.kafka.client_options import build_kafka_client_options" not in s:
-                    s = s.replace(imp_old, imp_new, 1)
-
-                s, count = pattern.subn(replacement, s, count=1)
-
-                if count == 0 and replacement not in s:
-                    raise SystemExit("producer block not found")
-
-                p.write_text(s)
-                PY
-                exec /app/docker-entrypoint.sh
-                """.strip());
     }
 
     /**

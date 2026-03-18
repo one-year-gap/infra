@@ -14,8 +14,8 @@ import java.util.List;
 
 public class NetworkStack extends Stack {
     private final Vpc vpc;
-    private final SecurityGroup customerAlbSg, customerApiSg, recommendationRealtimeSg, analysisServerSg, kafkaBrokerSg;
-    private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg;
+    private final SecurityGroup customerAlbSg, customerApiSg, intelligenceServerSg, kafkaBrokerSg;
+    private final SecurityGroup adminAlbSg, adminWebSg, adminApiSg, dbSg, monitoringSg, kafkaConnectSg;
     private static final int MSK_IAM_PORT = 9098;
 
     /**
@@ -80,19 +80,11 @@ public class NetworkStack extends Stack {
                 .description("Customer API Server Security Group")
                 .build();
 
-        // customer-api와 보안 경계를 분리하기 위해 별도 SG 사용
-        this.recommendationRealtimeSg = SecurityGroup.Builder.create(this, "RecommendationRealtimeSg")
+        this.intelligenceServerSg = SecurityGroup.Builder.create(this, "IntelligenceServerSg")
                 .vpc(vpc)
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
-                .description("Recommendation Realtime ECS Security Group")
-                .build();
-
-        this.analysisServerSg = SecurityGroup.Builder.create(this, "AnalysisServerSg")
-                .vpc(vpc)
-                .allowAllOutbound(false)
-                .disableInlineRules(true)
-                .description("Analysis Server ECS Security Group")
+                .description("Intelligence Server ECS Security Group")
                 .build();
 
         // Kafka broker SG는 client SG에서만 IAM/TLS 포트를 열어 private 통신만 허용
@@ -129,6 +121,20 @@ public class NetworkStack extends Stack {
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
                 .description("Database SecurityGroup: allow 5432 from API Server")
+                .build();
+
+        this.monitoringSg = SecurityGroup.Builder.create(this, "MonitoringSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("Monitoring EC2 Security Group")
+                .build();
+
+        this.kafkaConnectSg = SecurityGroup.Builder.create(this, "KafkaConnectSg")
+                .vpc(vpc)
+                .allowAllOutbound(false)
+                .disableInlineRules(true)
+                .description("Kafka Connect Security Group")
                 .build();
 
 
@@ -183,44 +189,44 @@ public class NetworkStack extends Stack {
          *                   Recommendation Realtime Rules
          * =================================================================
          */
-        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
-        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
-        recommendationRealtimeSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
-        recommendationRealtimeSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        intelligenceServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        intelligenceServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
                 "To MSK IAM only"
         );
-        recommendationRealtimeSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(dbSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
                 "To DB only"
         );
 
         kafkaBrokerSg.addIngressRule(
-                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
-                "From Recommendation Realtime only"
+                "From Intelligence Server only"
         );
         dbSg.addIngressRule(
-                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
-                "Recommendation Realtime to DB"
+                "Intelligence Server to DB"
         );
-        recommendationRealtimeSg.addIngressRule(
+        intelligenceServerSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(recommendationRealtimePort),
                 "From Admin API only"
         );
-        recommendationRealtimeSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort),
                 "To Admin API only"
         );
         adminApiSg.addIngressRule(
-                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort),
-                "From Recommendation Realtime only"
+                "From Intelligence Server only"
         );
 
         /*
@@ -228,36 +234,33 @@ public class NetworkStack extends Stack {
          *                   Analysis Server Rules
          * =================================================================
          */
-        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
-        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
-        analysisServerSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
-        analysisServerSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
                 "To MSK IAM only"
         );
-        analysisServerSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(dbSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
                 "To DB only"
         );
 
         kafkaBrokerSg.addIngressRule(
-                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
-                "From Analysis Server only"
+                "From Intelligence Server only"
         );
         dbSg.addIngressRule(
-                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 NetworkConstants.POSTGRES,
-                "Analysis Server to DB"
+                "Intelligence Server to DB"
         );
-        analysisServerSg.addIngressRule(
+        intelligenceServerSg.addIngressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(analysisServerPort),
                 "From readiness probe/admin API only"
         );
-        analysisServerSg.addEgressRule(
+        intelligenceServerSg.addEgressRule(
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort),
                 "To Admin API only"
@@ -322,17 +325,17 @@ public class NetworkStack extends Stack {
                 "To MSK IAM only"
         );
         adminApiSg.addEgressRule(
-                Peer.securityGroupId(recommendationRealtimeSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(recommendationRealtimePort),
                 "To Recommendation Realtime only"
         );
         adminApiSg.addEgressRule(
-                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(analysisServerPort),
                 "To Analysis Server only"
         );
         adminApiSg.addIngressRule(
-                Peer.securityGroupId(analysisServerSg.getSecurityGroupId()),
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
                 Port.tcp(adminServerPort),
                 "From Analysis Server only"
         );
@@ -346,6 +349,70 @@ public class NetworkStack extends Stack {
                 Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
                 "From Admin API only"
+        );
+
+        /*
+         * =================================================================
+         *                   Monitoring / Kafka Connect Rules
+         * =================================================================
+         */
+        monitoringSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        monitoringSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        monitoringSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
+        monitoringSg.addEgressRule(
+                Peer.securityGroupId(dbSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "To DB only"
+        );
+        monitoringSg.addEgressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "To Admin API only"
+        );
+        monitoringSg.addEgressRule(
+                Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
+                Port.tcp(customerServerPort),
+                "To Customer API only"
+        );
+        monitoringSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
+
+        dbSg.addIngressRule(
+                Peer.securityGroupId(monitoringSg.getSecurityGroupId()),
+                NetworkConstants.POSTGRES,
+                "Monitoring to DB"
+        );
+        adminApiSg.addIngressRule(
+                Peer.securityGroupId(monitoringSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "From Monitoring only"
+        );
+        customerApiSg.addIngressRule(
+                Peer.securityGroupId(monitoringSg.getSecurityGroupId()),
+                Port.tcp(customerServerPort),
+                "From Monitoring only"
+        );
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(monitoringSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Monitoring only"
+        );
+
+        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
+        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
+        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
+        kafkaConnectSg.addEgressRule(
+                Peer.securityGroupId(kafkaBrokerSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "To MSK IAM only"
+        );
+        kafkaBrokerSg.addIngressRule(
+                Peer.securityGroupId(kafkaConnectSg.getSecurityGroupId()),
+                Port.tcp(MSK_IAM_PORT),
+                "From Kafka Connect only"
         );
     }
 
@@ -363,11 +430,11 @@ public class NetworkStack extends Stack {
     }
 
     public SecurityGroup getRecommendationRealtimeSg() {
-        return recommendationRealtimeSg;
+        return intelligenceServerSg;
     }
 
     public SecurityGroup getAnalysisServerSg() {
-        return analysisServerSg;
+        return intelligenceServerSg;
     }
 
     public SecurityGroup getKafkaBrokerSg() {
@@ -388,5 +455,13 @@ public class NetworkStack extends Stack {
 
     public SecurityGroup getDbSg() {
         return dbSg;
+    }
+
+    public SecurityGroup getMonitoringSg() {
+        return monitoringSg;
+    }
+
+    public SecurityGroup getKafkaConnectSg() {
+        return kafkaConnectSg;
     }
 }

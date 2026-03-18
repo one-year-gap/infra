@@ -139,7 +139,7 @@ public enum EnvKey {
     ADMIN_API_IMAGE_TAG,
     CUSTOMER_API_IMAGE_TAG,
     LOG_SERVER_IMAGE_TAG("latest"),
-    RECOMMENDATION_REALTIME_IMAGE_TAG("counseling-analytics-v0.0.4"),
+    RECOMMENDATION_REALTIME_IMAGE_TAG("intelligence-server-v0.0.1"),
 
     /*
      * =================================================================
@@ -150,6 +150,9 @@ public enum EnvKey {
     RECOMMENDATION_REALTIME_DESIRED_COUNT("1"),
     RECOMMENDATION_REALTIME_RUNTIME_SECRET_NAME("holliverse/prod/counseling-analytics/runtime"),
     RECOMMENDATION_REALTIME_CLOUD_MAP_NAME("recommendation-realtime"),
+    INTELLIGENCE_SERVER_PORT("8000"),
+    INTELLIGENCE_SERVER_DESIRED_COUNT("1"),
+    INTELLIGENCE_SERVER_CLOUD_MAP_NAME("intelligence-server"),
     RECOMMENDATION_REALTIME_OPENAI_CHAT_MODEL("gpt-4o-mini"),
     RECOMMENDATION_REALTIME_OPENAI_EMBEDDING_MODEL("text-embedding-3-small"),
     LOG_SERVER_PORT("8080"),

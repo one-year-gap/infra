@@ -7,6 +7,8 @@ import software.amazon.awscdk.services.ecs.Cluster;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.constructs.Construct;
 
+import java.util.Map;
+
 public record FargateWebServiceProps(
         Construct scope,
         String id,
@@ -23,6 +25,7 @@ public record FargateWebServiceProps(
 
         SubnetSelection subnets,
         int desiredCount, //유지할 Task 개수
-        boolean enableEcsExec//AWS ECS exectute-command 사용 여부
+        boolean enableEcsExec,//AWS ECS exectute-command 사용 여부
+        Map<String, String> environment
 ) {
 }
