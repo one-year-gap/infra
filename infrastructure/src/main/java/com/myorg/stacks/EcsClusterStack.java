@@ -127,7 +127,9 @@ public class EcsClusterStack extends Stack {
             int customerApiPort,
             String adminWebImageTag,
             String adminApiImageTag,
-            String customerApiImageTag
+            String customerApiImageTag,
+            String intelligenceServerImageTag,
+            String logServerImageTag
     ) {
         super(scope, id, props);
 
@@ -329,7 +331,7 @@ public class EcsClusterStack extends Stack {
                 INTELLIGENCE_SERVER_ID,
                 cluster,
                 recommendationRealtimeRepo,
-                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG),
+                intelligenceServerImageTag,
                 analysisServerSg,
                 recommendationRealtimeLogGroup,
                 INTELLIGENCE_SERVER_LOG_STREAM_PREFIX,
@@ -356,7 +358,7 @@ public class EcsClusterStack extends Stack {
                 LOG_SERVER_ID,
                 cluster,
                 logServerRepo,
-                AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_IMAGE_TAG),
+                logServerImageTag,
                 logServerSg,
                 ecsLogGroup,
                 LOG_SERVER_LOG_STREAM_PREFIX,

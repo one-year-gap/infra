@@ -20,6 +20,14 @@ import software.amazon.awscdk.services.route53.HostedZone;
 import software.amazon.awscdk.services.route53.HostedZoneProviderProps;
 import software.amazon.awscdk.services.route53.IHostedZone;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 public class InfrastructureApp {
     private static final String ROUTE53_STACK_ID = "Route53Stack";
     private static final String NETWORK_STACK_ID = "NetworkStack";
@@ -452,7 +460,42 @@ public class InfrastructureApp {
             String ecsMskClusterArn,
             String ecsMskBootstrapBrokers
     ) {
-        String legacyApiImageTag = AppConfig.getOptionalValueOrDefault("API_IMAGE_TAG", DEFAULT_IMAGE_TAG);
+        String adminWebImageTag = resolvePinnedImageTag(
+                "ADMIN_WEB_IMAGE_TAG",
+                "one-year-gap/admin-fe",
+                "EcsClusterStack-AdminWebService",
+                DEFAULT_IMAGE_TAG
+        );
+        String legacyApiImageTag = resolvePinnedImageTag(
+                "API_IMAGE_TAG",
+                "one-year-gap/api-server",
+                "EcsClusterStack-AdminApiService",
+                DEFAULT_IMAGE_TAG
+        );
+        String adminApiImageTag = resolvePinnedImageTag(
+                "ADMIN_API_IMAGE_TAG",
+                "one-year-gap/api-server",
+                "EcsClusterStack-AdminApiService",
+                legacyApiImageTag
+        );
+        String customerApiImageTag = resolvePinnedImageTag(
+                "CUSTOMER_API_IMAGE_TAG",
+                "one-year-gap/api-server",
+                "EcsClusterStack-CustomerApiService",
+                legacyApiImageTag
+        );
+        String intelligenceServerImageTag = resolvePinnedImageTag(
+                EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG.key(),
+                "one-year-gap/counseling-analytics",
+                "intelligence-server",
+                AppConfig.getValueOrDefault(EnvKey.RECOMMENDATION_REALTIME_IMAGE_TAG)
+        );
+        String logServerImageTag = resolvePinnedImageTag(
+                EnvKey.LOG_SERVER_IMAGE_TAG.key(),
+                "one-year-gap/log-server",
+                "log-server",
+                AppConfig.getValueOrDefault(EnvKey.LOG_SERVER_IMAGE_TAG)
+        );
 
         return new EcsClusterStack(
                 context.app(),
@@ -477,10 +520,126 @@ public class InfrastructureApp {
                 PortConfig.getAdminWebPort(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
-                AppConfig.getOptionalValueOrDefault("ADMIN_WEB_IMAGE_TAG", DEFAULT_IMAGE_TAG),
-                AppConfig.getOptionalValueOrDefault("ADMIN_API_IMAGE_TAG", legacyApiImageTag),
-                AppConfig.getOptionalValueOrDefault("CUSTOMER_API_IMAGE_TAG", legacyApiImageTag)
+                adminWebImageTag,
+                adminApiImageTag,
+                customerApiImageTag,
+                intelligenceServerImageTag,
+                logServerImageTag
         );
+    }
+
+    private static String resolvePinnedImageTag(
+            String envKey,
+            String expectedRepositorySuffix,
+            String serviceNamePattern,
+            String fallbackTag
+    ) {
+        String liveTag = resolveLiveImageTag(expectedRepositorySuffix, serviceNamePattern);
+        if (liveTag != null && !liveTag.isBlank()) {
+            return liveTag;
+        }
+
+        String explicit = AppConfig.getOptionalValue(envKey);
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit;
+        }
+
+        return fallbackTag;
+    }
+
+    private static String resolveLiveImageTag(String expectedRepositorySuffix, String serviceNamePattern) {
+        String clusterArn = runAwsCli(
+                "ecs", "list-clusters",
+                "--query", "clusterArns[?contains(@, 'HolliverseCluster')]|[0]",
+                "--output", "text"
+        );
+        if (clusterArn == null || clusterArn.isBlank() || "None".equals(clusterArn)) {
+            return null;
+        }
+
+        String clusterName = clusterArn.substring(clusterArn.lastIndexOf('/') + 1);
+        String serviceArns = runAwsCli(
+                "ecs", "list-services",
+                "--cluster", clusterName,
+                "--query", "serviceArns",
+                "--output", "text"
+        );
+        if (serviceArns == null || serviceArns.isBlank()) {
+            return null;
+        }
+
+        String matchedService = Arrays.stream(serviceArns.split("\\s+"))
+                .map(String::trim)
+                .filter(value -> !value.isBlank() && !"None".equals(value))
+                .map(value -> value.substring(value.lastIndexOf('/') + 1))
+                .filter(value -> value.contains(serviceNamePattern))
+                .findFirst()
+                .orElse(null);
+        if (matchedService == null) {
+            return null;
+        }
+
+        String taskDefinitionArn = runAwsCli(
+                "ecs", "describe-services",
+                "--cluster", clusterName,
+                "--services", matchedService,
+                "--query", "services[0].taskDefinition",
+                "--output", "text"
+        );
+        if (taskDefinitionArn == null || taskDefinitionArn.isBlank() || "None".equals(taskDefinitionArn)) {
+            return null;
+        }
+
+        String imageUri = runAwsCli(
+                "ecs", "describe-task-definition",
+                "--task-definition", taskDefinitionArn,
+                "--query", "taskDefinition.containerDefinitions[0].image",
+                "--output", "text"
+        );
+        if (imageUri == null || imageUri.isBlank() || "None".equals(imageUri)) {
+            return null;
+        }
+        if (!imageUri.contains("/" + expectedRepositorySuffix + ":")) {
+            return null;
+        }
+
+        int tagSeparator = imageUri.lastIndexOf(':');
+        if (tagSeparator < 0 || tagSeparator == imageUri.length() - 1) {
+            return null;
+        }
+        return imageUri.substring(tagSeparator + 1);
+    }
+
+    private static String runAwsCli(String... args) {
+        List<String> command = new ArrayList<>();
+        command.add("aws");
+        command.addAll(List.of(args));
+
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        processBuilder.redirectErrorStream(true);
+
+        try {
+            Process process = processBuilder.start();
+            String output;
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
+            )) {
+                output = reader.lines().reduce("", (left, right) -> left + right + "\n");
+            }
+
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                return null;
+            }
+
+            String trimmed = output.trim();
+            return trimmed.isEmpty() ? null : trimmed;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /**

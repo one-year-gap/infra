@@ -1029,15 +1029,19 @@ jobs:
       - name: Roll out new images via ECS task definition update
         id: deploy-ecs
         shell: bash
-        env:
-          RELEASE_TAG:       ${{ needs.create-tag.outputs.version_tag }}
-          DEPLOY_API_SERVER: ${{ needs.resolve-context.outputs.deploy_api_server }}
-          DEPLOY_ADMIN_WEB:  ${{ needs.resolve-context.outputs.deploy_admin_web }}
         run: |
           set -euo pipefail
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          source <(
+            AWS_REGION="${AWS_REGION}" \
+            ADMIN_WEB_REPOSITORY="${ADMIN_WEB_REPOSITORY}" \
+            API_SERVER_REPOSITORY="${API_SERVER_REPOSITORY}" \
+            COUNSELING_ANALYTICS_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY}" \
+            ./scripts/resolve-ecs-image-tags.sh --format shell
+          )
 
           # ── 헬퍼: CloudFormation EcsClusterStack에서 LogicalResourceId 패턴으로 서비스 ARN 조회
           get_service_arn() {
@@ -1121,7 +1125,7 @@ jobs:
           deployed_services=()
 
           # ── admin-web 롤아웃
-          if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
+          if [ "${{ needs.resolve-context.outputs.deploy_admin_web }}" = "true" ]; then
             svc_arn="$(get_service_arn "AdminWeb")"
             if [ -z "$svc_arn" ] || [ "$svc_arn" = "None" ]; then
               echo "::error::AdminWeb service not found in EcsClusterStack"
@@ -1134,16 +1138,16 @@ jobs:
               --region "$AWS_REGION" --cluster "$cluster" --services "$service" \
               --query 'services[0].taskDefinition' --output text)"
 
-            new_image="${REGISTRY}/${ADMIN_WEB_REPOSITORY}:${RELEASE_TAG}"
+            new_image="${REGISTRY}/${ADMIN_WEB_REPOSITORY}:${ADMIN_WEB_IMAGE_TAG}"
             new_taskdef="$(register_new_revision "$current_taskdef" "admin-web" "$new_image")"
             rollout_service "$cluster" "$service" "$new_taskdef"
 
-            echo "admin_web_image_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "admin_web_image_tag=${ADMIN_WEB_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
             deployed_services+=("AdminWeb($service)")
           fi
 
           # ── api-server 롤아웃 (admin / customer 프로파일 각각 별도 서비스)
-          if [ "${DEPLOY_API_SERVER}" = "true" ]; then
+          if [ "${{ needs.resolve-context.outputs.deploy_api_server }}" = "true" ]; then
             # Admin API
             admin_svc_arn="$(get_service_arn "AdminApi")"
             if [ -z "$admin_svc_arn" ] || [ "$admin_svc_arn" = "None" ]; then
@@ -1157,7 +1161,7 @@ jobs:
               --region "$AWS_REGION" --cluster "$admin_cluster" --services "$admin_service" \
               --query 'services[0].taskDefinition' --output text)"
 
-            admin_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:admin-${RELEASE_TAG}"
+            admin_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:${ADMIN_API_IMAGE_TAG}"
             admin_new_taskdef="$(register_new_revision "$admin_cur_taskdef" "api-server" "$admin_new_image")"
 
             # Customer API
@@ -1173,15 +1177,15 @@ jobs:
               --region "$AWS_REGION" --cluster "$customer_cluster" --services "$customer_service" \
               --query 'services[0].taskDefinition' --output text)"
 
-            customer_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:customer-${RELEASE_TAG}"
+            customer_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:${CUSTOMER_API_IMAGE_TAG}"
             customer_new_taskdef="$(register_new_revision "$customer_cur_taskdef" "api-server" "$customer_new_image")"
 
             # 두 서비스 롤아웃 (순서 무관하게 동시 진행은 불가하므로 순차 실행)
             rollout_service "$admin_cluster"    "$admin_service"    "$admin_new_taskdef"
             rollout_service "$customer_cluster" "$customer_service" "$customer_new_taskdef"
 
-            echo "admin_api_image_tag=admin-${RELEASE_TAG}"       >> "$GITHUB_OUTPUT"
-            echo "customer_api_image_tag=customer-${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "admin_api_image_tag=${ADMIN_API_IMAGE_TAG}"       >> "$GITHUB_OUTPUT"
+            echo "customer_api_image_tag=${CUSTOMER_API_IMAGE_TAG}" >> "$GITHUB_OUTPUT"
             deployed_services+=("AdminApi($admin_service)" "CustomerApi($customer_service)")
           fi
 
@@ -1702,8 +1706,6 @@ jobs:
       - name: Register task definition revision and update intelligence-server service
         id: deploy-service
         shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.create-tag.outputs.version_tag }}
         run: |
           set -euo pipefail
 
@@ -1781,8 +1783,14 @@ jobs:
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          # [CHANGE] intelligence-server prefix로 통일된 이미지 태그 사용
-          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:intelligence-server-${RELEASE_TAG}"
+          source <(
+            AWS_REGION="${AWS_REGION}" \
+            ADMIN_WEB_REPOSITORY="${ADMIN_WEB_REPOSITORY}" \
+            API_SERVER_REPOSITORY="${API_SERVER_REPOSITORY}" \
+            COUNSELING_ANALYTICS_REPOSITORY="${COUNSELING_ANALYTICS_REPOSITORY}" \
+            ./scripts/resolve-ecs-image-tags.sh --format shell
+          )
+          IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:${RECOMMENDATION_REALTIME_IMAGE_TAG}"
 
           resolved_service_name="$(resolve_service_name_from_cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
           if [ -z "$resolved_service_name" ]; then
