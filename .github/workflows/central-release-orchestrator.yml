@@ -1749,6 +1749,23 @@ jobs:
             printf '%s\n' ""
           }
 
+          resolve_taskdef_from_service() {
+            local cluster_name="$1"
+            local service_name="$2"
+            local taskdef=""
+
+            [ -n "$cluster_name" ] || return 0
+            [ -n "$service_name" ] || return 0
+
+            taskdef="$(aws ecs describe-services \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --services "$service_name" \
+              --query 'services[0].taskDefinition' \
+              --output text 2>/dev/null || true)"
+            normalize_aws_text_scalar "$taskdef"
+          }
+
           if [ -z "${COUNSELING_ANALYTICS_REPOSITORY:-}" ]; then
             echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
             exit 1
@@ -1767,7 +1784,17 @@ jobs:
           # [CHANGE] intelligence-server prefix로 통일된 이미지 태그 사용
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:intelligence-server-${RELEASE_TAG}"
 
-          source_taskdef="${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}"
+          resolved_service_name="$(resolve_service_name_from_cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
+          if [ -z "$resolved_service_name" ]; then
+            echo "::error::Could not resolve intelligence-server ECS service in cluster=${COUNSELING_ANALYTICS_CLUSTER_NAME}. secret=${COUNSELING_ANALYTICS_SERVICE_NAME}"
+            exit 1
+          fi
+          if [ "$resolved_service_name" != "$COUNSELING_ANALYTICS_SERVICE_NAME" ]; then
+            echo "::warning::COUNSELING_ANALYTICS_SERVICE_NAME=${COUNSELING_ANALYTICS_SERVICE_NAME} not found. Using live ECS service ${resolved_service_name} instead."
+          fi
+
+          source_taskdef="$(resolve_taskdef_from_service "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$resolved_service_name")"
+          source_taskdef="${source_taskdef:-${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}}"
           if [ -z "$source_taskdef" ]; then
             if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
               echo "::error::Set COUNSELING_ANALYTICS_TASK_DEFINITION_ARN or COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY"
@@ -1827,15 +1854,6 @@ jobs:
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
             echo "::error::Failed to register task definition revision"
             exit 1
-          fi
-
-          resolved_service_name="$(resolve_service_name_from_cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
-          if [ -z "$resolved_service_name" ]; then
-            echo "::error::Could not resolve intelligence-server ECS service in cluster=${COUNSELING_ANALYTICS_CLUSTER_NAME}. secret=${COUNSELING_ANALYTICS_SERVICE_NAME}"
-            exit 1
-          fi
-          if [ "$resolved_service_name" != "$COUNSELING_ANALYTICS_SERVICE_NAME" ]; then
-            echo "::warning::COUNSELING_ANALYTICS_SERVICE_NAME=${COUNSELING_ANALYTICS_SERVICE_NAME} not found. Using live ECS service ${resolved_service_name} instead."
           fi
 
           aws ecs update-service \
