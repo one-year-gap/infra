@@ -147,14 +147,20 @@ public class InfrastructureApp {
      * 네트워크 + 모니터링(Grafana) 스택 배포
      */
     private static void deployMonitoring(DeploymentContext context) {
-        NetworkStack networkStack = createNetworkStack(context);
-        MskStack mskStack = createMskStack(context, networkStack);
+        BaseStacks baseStacks = createBaseStacks(context);
+        MskStack mskStack = createMskStack(context, baseStacks.networkStack());
+        EcsClusterStack ecsClusterStack = createEcsClusterStack(context, baseStacks, mskStack);
+        AlbStack albStack = createAlbStack(context, baseStacks.networkStack(), ecsClusterStack);
+        createAlbWafStack(context, albStack);
+        createDnsStack(context, albStack);
+
         MonitoringStackProps props = new MonitoringStackProps(
-                networkStack.getVpc(),
-                networkStack.getDbSg(),
-                networkStack.getAdminApiSg(),
-                networkStack.getCustomerApiSg(),
-                networkStack.getKafkaBrokerSg(),
+                baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getMonitoringSg(),
+                baseStacks.networkStack().getDbSg(),
+                baseStacks.networkStack().getAdminApiSg(),
+                baseStacks.networkStack().getCustomerApiSg(),
+                baseStacks.networkStack().getKafkaBrokerSg(),
                 mskStack.getBootstrapBrokersSaslIam(),
                 PortConfig.getAdminServerPort(),
                 PortConfig.getCustomerServerPort(),
@@ -183,6 +189,7 @@ public class InfrastructureApp {
 
         MonitoringStackProps monitoringProps = new MonitoringStackProps(
                 baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getMonitoringSg(),
                 baseStacks.networkStack().getDbSg(),
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
@@ -217,6 +224,7 @@ public class InfrastructureApp {
 
         MonitoringStackProps monitoringProps = new MonitoringStackProps(
                 baseStacks.networkStack().getVpc(),
+                baseStacks.networkStack().getMonitoringSg(),
                 baseStacks.networkStack().getDbSg(),
                 baseStacks.networkStack().getAdminApiSg(),
                 baseStacks.networkStack().getCustomerApiSg(),
@@ -395,7 +403,8 @@ public class InfrastructureApp {
                 MSK_CONNECT_STACK_ID,
                 context.stackProps(),
                 networkStack.getVpc(),
-                networkStack.getKafkaBrokerSg().getSecurityGroupId(),
+                networkStack.getKafkaBrokerSg(),
+                networkStack.getKafkaConnectSg(),
                 AppConfig.getValueOrDefault(EnvKey.MSK_CLUSTER_NAME),
                 mskStack.getBootstrapBrokersSaslIam(),
                 mskStack.getCluster().getAttrArn(),

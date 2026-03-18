@@ -6,6 +6,7 @@ import software.amazon.awscdk.services.ec2.Vpc;
 
 public record MonitoringStackProps(
         Vpc vpc,
+        SecurityGroup monitoringSg,
         SecurityGroup dbSg,
         SecurityGroup adminApiSg,
         SecurityGroup customerApiSg,

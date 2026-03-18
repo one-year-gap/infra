@@ -551,6 +551,13 @@ public class EcsClusterStack extends Stack {
             // 클릭 로그 토픽 이름
             env.put("KAFKA_CLICK_LOG_TOPIC", AppConfig.getValueOrDefault(EnvKey.CLICK_LOG_TOPIC));
         }
+        // customer-api도 recommendation 호출을 intelligence-server 단일 런타임으로 보낸다.
+        env.put(
+                "FASTAPI_BASE_URL",
+                "http://" + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_CLOUD_MAP_NAME) + "."
+                        + AppConfig.getInternalDomainName() + ":"
+                        + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_PORT)
+        );
         return env;
     }
 

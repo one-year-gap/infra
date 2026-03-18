@@ -36,6 +36,9 @@ class MskConnectStackTest {
         SecurityGroup kafkaBrokerSg = SecurityGroup.Builder.create(fixtureStack, "TestKafkaBrokerSg")
                 .vpc(vpc)
                 .build();
+        SecurityGroup kafkaConnectSg = SecurityGroup.Builder.create(fixtureStack, "TestKafkaConnectSg")
+                .vpc(vpc)
+                .build();
 
         Bucket clickLogBucket = Bucket.Builder.create(fixtureStack, "TestClickLogBucket")
                 .bucketName("test-click-log-raw-bucket")
@@ -46,7 +49,8 @@ class MskConnectStackTest {
                 "MskConnectStackTest",
                 stackProps,
                 vpc,
-                kafkaBrokerSg.getSecurityGroupId(),
+                kafkaBrokerSg,
+                kafkaConnectSg,
                 "holliverse-msk",
                 "b-1.test.kafka.ap-northeast-2.amazonaws.com:9098",
                 "arn:aws:kafka:ap-northeast-2:123456789012:cluster/holliverse-msk/test-cluster-id",
@@ -62,7 +66,7 @@ class MskConnectStackTest {
 
         assertEquals(1, connectors.size());
         assertEquals(1, plugins.size());
-        assertEquals(1, securityGroups.size());
+        assertEquals(0, securityGroups.size());
 
         template.hasResourceProperties("AWS::KafkaConnect::Connector", Map.of(
                 "ConnectorName", "click-log-s3-sink",

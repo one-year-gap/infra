@@ -2,13 +2,9 @@ package com.myorg.stacks;
 
 import com.myorg.config.AppConfig;
 import com.myorg.config.EnvKey;
-import com.myorg.constants.NetworkConstants;
 import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
-import software.amazon.awscdk.services.ec2.ISecurityGroup;
-import software.amazon.awscdk.services.ec2.Peer;
-import software.amazon.awscdk.services.ec2.Port;
 import software.amazon.awscdk.services.ec2.SecurityGroup;
 import software.amazon.awscdk.services.ec2.SubnetSelection;
 import software.amazon.awscdk.services.ec2.SubnetType;
@@ -35,7 +31,6 @@ import java.util.Map;
  */
 public class MskConnectStack extends Stack {
     private static final String CONNECTOR_NAME = "click-log-s3-sink";
-    private static final int MSK_IAM_PORT = 9098;
     private static final String RAW_PREFIX = "events/raw";
     private static final String HOURLY_PATH_FORMAT = "'dt'=YYYY-MM-dd/'hour'=HH";
     private static final String HOURLY_PARTITION_DURATION_MS = "3600000";
@@ -50,7 +45,8 @@ public class MskConnectStack extends Stack {
             String id,
             StackProps props,
             Vpc vpc,
-            String kafkaBrokerSecurityGroupId,
+            SecurityGroup kafkaBrokerSg,
+            SecurityGroup kafkaConnectSg,
             String mskClusterName,
             String mskBootstrapBrokers,
             String mskClusterArn,
@@ -64,36 +60,6 @@ public class MskConnectStack extends Stack {
                 .subnetType(SubnetType.PRIVATE_WITH_EGRESS)
                 .build());
         List<String> privateSubnetIds = privateSubnets.getSubnetIds();
-
-        // Kafka Connect 전용 보안 그룹
-        SecurityGroup kafkaConnectSg = SecurityGroup.Builder.create(this, "KafkaConnectSg")
-                .vpc(vpc)
-                .allowAllOutbound(false)
-                .disableInlineRules(true)
-                .description("Kafka Connect Security Group")
-                .build();
-
-        // broker SG 참조
-        ISecurityGroup kafkaBrokerSg = SecurityGroup.fromSecurityGroupId(
-                this,
-                "KafkaBrokerSgRef",
-                kafkaBrokerSecurityGroupId
-        );
-
-        // HTTPS 아웃바운드
-        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.HTTPS, "HTTPS");
-        // DNS TCP 아웃바운드
-        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_TCP, "DNS");
-        // DNS UDP 아웃바운드
-        kafkaConnectSg.addEgressRule(Peer.anyIpv4(), NetworkConstants.DNS_UDP, "DNS(UDP)");
-        // MSK IAM 포트 아웃바운드
-        kafkaConnectSg.addEgressRule(
-                Peer.securityGroupId(kafkaBrokerSecurityGroupId),
-                Port.tcp(MSK_IAM_PORT),
-                "To MSK IAM only"
-        );
-        // Kafka Connect 인바운드 허용
-        kafkaBrokerSg.addIngressRule(kafkaConnectSg, Port.tcp(MSK_IAM_PORT), "From Kafka Connect only");
 
         // 플러그인 asset 경로
         Asset s3SinkPluginAsset = Asset.Builder.create(this, "S3SinkPluginAsset")
