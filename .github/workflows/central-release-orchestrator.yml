@@ -1051,15 +1051,46 @@ jobs:
         run: |
           set -euo pipefail
 
-          source <(
-            AWS_REGION="$AWS_REGION" \
-            ADMIN_WEB_REPOSITORY="$ADMIN_WEB_REPOSITORY" \
-            API_SERVER_REPOSITORY="$API_SERVER_REPOSITORY" \
-            RELEASE_TAG="$RELEASE_TAG" \
-            DEPLOY_ADMIN_WEB="$DEPLOY_ADMIN_WEB" \
-            DEPLOY_API_SERVER="$DEPLOY_API_SERVER" \
-            "$GITHUB_WORKSPACE/scripts/resolve-ecs-image-tags.sh" --format shell
-          )
+          # [FIX] resolve-ecs-image-tags.sh 외부 스크립트 의존 제거 — 인라인으로 직접 resolve
+          # ECR 이미지 태그 규칙:
+          #   admin-web   → ${RELEASE_TAG}
+          #   api-server  → admin-${RELEASE_TAG} / customer-${RELEASE_TAG}
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+          # admin-web: 배포 대상이면 ECR에서 latest resolve, 아니면 현재 서비스 태그 유지
+          if [ "${DEPLOY_ADMIN_WEB}" = "true" ]; then
+            ADMIN_WEB_IMAGE_TAG="${RELEASE_TAG}"
+          else
+            # 배포 대상이 아닌 경우: 현재 ECS 서비스에서 실행 중인 태그를 그대로 사용
+            ADMIN_WEB_IMAGE_TAG="$(aws ecr describe-images \
+              --region "$AWS_REGION" \
+              --repository-name "${ADMIN_WEB_REPOSITORY}" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags[0]' \
+              --output text 2>/dev/null || echo "")"
+          fi
+
+          if [ "${DEPLOY_API_SERVER}" = "true" ]; then
+            ADMIN_API_IMAGE_TAG="admin-${RELEASE_TAG}"
+            CUSTOMER_API_IMAGE_TAG="customer-${RELEASE_TAG}"
+          else
+            ADMIN_API_IMAGE_TAG="$(aws ecr describe-images \
+              --region "$AWS_REGION" \
+              --repository-name "${API_SERVER_REPOSITORY}" \
+              --filter '{"tagStatus":"TAGGED"}' \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags' \
+              --output json 2>/dev/null \
+              | jq -r '.[] | select(startswith("admin-"))' | head -n1 || echo "")"
+            CUSTOMER_API_IMAGE_TAG="$(aws ecr describe-images \
+              --region "$AWS_REGION" \
+              --repository-name "${API_SERVER_REPOSITORY}" \
+              --filter '{"tagStatus":"TAGGED"}' \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageTags' \
+              --output json 2>/dev/null \
+              | jq -r '.[] | select(startswith("customer-"))' | head -n1 || echo "")"
+          fi
+
+          export ADMIN_WEB_IMAGE_TAG ADMIN_API_IMAGE_TAG CUSTOMER_API_IMAGE_TAG
 
           msk_cluster_name="$(aws cloudformation describe-stacks \
             --region "$AWS_REGION" \
