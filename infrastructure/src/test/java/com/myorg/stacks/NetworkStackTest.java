@@ -276,6 +276,18 @@ class NetworkStackTest {
         void shouldAllowOutboundToKafkaBroker() {
             assertEgressToSecurityGroup(customerApiSgLogicalId, kafkaBrokerSgLogicalId, MSK_IAM_PORT);
         }
+
+        @Test
+        @DisplayName("Intelligence Server 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToIntelligenceServer() {
+            assertEgressToSecurityGroup(customerApiSgLogicalId, recommendationRealtimeSgLogicalId, RECOMMENDATION_REALTIME_PORT);
+        }
+
+        @Test
+        @DisplayName("Admin API 포트로 아웃바운드를 허용한다")
+        void shouldAllowOutboundToAdminApi() {
+            assertEgressToSecurityGroup(customerApiSgLogicalId, adminApiSgLogicalId, ADMIN_SERVER_PORT);
+        }
     }
 
     @Nested
@@ -298,6 +310,12 @@ class NetworkStackTest {
         @DisplayName("Admin API에서만 recommendation 포트 인바운드를 허용한다")
         void shouldAllowInboundFromAdminApiOnly() {
             assertIngressFromSecurityGroup(recommendationRealtimeSgLogicalId, adminApiSgLogicalId, RECOMMENDATION_REALTIME_PORT);
+        }
+
+        @Test
+        @DisplayName("Customer API에서도 recommendation 포트 인바운드를 허용한다")
+        void shouldAllowInboundFromCustomerApi() {
+            assertIngressFromSecurityGroup(recommendationRealtimeSgLogicalId, customerApiSgLogicalId, RECOMMENDATION_REALTIME_PORT);
         }
 
         @Test
@@ -420,6 +438,12 @@ class NetworkStackTest {
         @DisplayName("Admin Web에서만 adminServerPort 인바운드를 허용한다 ★")
         void shouldAllowInboundFromAdminAlbOnly() {
             assertIngressFromSecurityGroup(adminApiSgLogicalId, adminWebSgLogicalId, ADMIN_SERVER_PORT);
+        }
+
+        @Test
+        @DisplayName("Customer API에서도 adminServerPort 인바운드를 허용한다")
+        void shouldAllowInboundFromCustomerApi() {
+            assertIngressFromSecurityGroup(adminApiSgLogicalId, customerApiSgLogicalId, ADMIN_SERVER_PORT);
         }
 
         @Test

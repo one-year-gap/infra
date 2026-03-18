@@ -242,7 +242,7 @@ public class EcsClusterStack extends Stack {
          * 8) Props Setup
          */
         Map<String, String> adminApiEnvironment = buildAdminApiEnvironment(mskBootstrapBrokersSaslIam);
-        Map<String, String> customerApiEnvironment = buildCustomerApiEnvironment(mskBootstrapBrokersSaslIam);
+        Map<String, String> customerApiEnvironment = buildCustomerApiEnvironment(adminApiPort, mskBootstrapBrokersSaslIam);
 
         FargateWebServiceProps adminWebServiceProps = new FargateWebServiceProps(
                 this,
@@ -506,7 +506,7 @@ public class EcsClusterStack extends Stack {
     /**
      * customer-api producer 환경값 구성.
      */
-    private Map<String, String> buildCustomerApiEnvironment(String mskBootstrapBrokersSaslIam) {
+    private Map<String, String> buildCustomerApiEnvironment(int adminApiPort, String mskBootstrapBrokersSaslIam) {
         Map<String, String> env = new HashMap<>();
         // DB 풀 상한
         env.put("DB_POOL_MAX", "10");
@@ -534,6 +534,10 @@ public class EcsClusterStack extends Stack {
                 "http://" + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_CLOUD_MAP_NAME) + "."
                         + AppConfig.getInternalDomainName() + ":"
                         + AppConfig.getValueOrDefault(EnvKey.INTELLIGENCE_SERVER_PORT)
+        );
+        env.put(
+                "ADMIN_API_BASE_URL",
+                "http://" + ADMIN_CLOUD_MAP_NAME + "." + AppConfig.getInternalDomainName() + ":" + adminApiPort
         );
         return env;
     }

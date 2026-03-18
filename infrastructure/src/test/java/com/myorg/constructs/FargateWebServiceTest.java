@@ -54,7 +54,8 @@ class FargateWebServiceTest {
                 "admin-web",
                 SubnetSelection.builder().subnetType(SubnetType.PRIVATE_WITH_EGRESS).build(),
                 1,
-                false
+                false,
+                Map.of()
         );
 
         new FargateWebService(props);

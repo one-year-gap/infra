@@ -4,6 +4,7 @@ import com.myorg.config.AppConfig;
 import com.myorg.config.EnvKey;
 import com.myorg.config.NetworkStackConfig;
 import com.myorg.constants.NetworkConstants;
+import software.amazon.awscdk.CfnOutput;
 import software.amazon.awscdk.Stack;
 import software.amazon.awscdk.StackProps;
 import software.amazon.awscdk.services.ec2.*;
@@ -92,7 +93,7 @@ public class NetworkStack extends Stack {
                 .vpc(vpc)
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
-                .description("MSK Broker Security Group")
+                .description("MSK Serverless Broker Security Group")
                 .build();
 
         this.adminAlbSg = SecurityGroup.Builder.create(this, "AdminAlbSg")
@@ -127,7 +128,7 @@ public class NetworkStack extends Stack {
                 .vpc(vpc)
                 .allowAllOutbound(false)
                 .disableInlineRules(true)
-                .description("Monitoring EC2 Security Group")
+                .description("Grafana Security Group")
                 .build();
 
         this.kafkaConnectSg = SecurityGroup.Builder.create(this, "KafkaConnectSg")
@@ -172,6 +173,16 @@ public class NetworkStack extends Stack {
                 Port.tcp(MSK_IAM_PORT),
                 "To MSK IAM only"
         );
+        customerApiSg.addEgressRule(
+                Peer.securityGroupId(intelligenceServerSg.getSecurityGroupId()),
+                Port.tcp(recommendationRealtimePort),
+                "To Intelligence Server only"
+        );
+        customerApiSg.addEgressRule(
+                Peer.securityGroupId(adminApiSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "To Admin API only"
+        );
 
         dbSg.addIngressRule(
                 Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
@@ -181,6 +192,16 @@ public class NetworkStack extends Stack {
         kafkaBrokerSg.addIngressRule(
                 Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
                 Port.tcp(MSK_IAM_PORT),
+                "From Customer API only"
+        );
+        adminApiSg.addIngressRule(
+                Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
+                Port.tcp(adminServerPort),
+                "From Customer API only"
+        );
+        intelligenceServerSg.addIngressRule(
+                Peer.securityGroupId(customerApiSg.getSecurityGroupId()),
+                Port.tcp(recommendationRealtimePort),
                 "From Customer API only"
         );
 
@@ -414,6 +435,12 @@ public class NetworkStack extends Stack {
                 Port.tcp(MSK_IAM_PORT),
                 "From Kafka Connect only"
         );
+
+        // 기존 MskConnectStack import를 깨지 않도록 legacy export 이름을 유지한다.
+        CfnOutput.Builder.create(this, "ExportsOutputFnGetAttKafkaConnectSgF2E89030GroupIdE6B3FB02")
+                .value(kafkaConnectSg.getSecurityGroupId())
+                .exportName("NetworkStack:ExportsOutputFnGetAttKafkaConnectSgF2E89030GroupIdE6B3FB02")
+                .build();
     }
 
 

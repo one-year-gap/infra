@@ -215,6 +215,15 @@ class EcsClusterStackTest {
                 .contains("ADMIN_API_BASE_URL")
                 .contains("http://admin-api.example.internal:8080")
                 .contains("OPENAI_API_KEY");
+
+        String customerApiTaskDefinitionJson = taskDefinitions.values().stream()
+                .map(Object::toString)
+                .filter(json -> json.contains("customer"))
+                .findFirst()
+                .orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(customerApiTaskDefinitionJson)
+                .contains("ADMIN_API_BASE_URL")
+                .contains("http://admin-api.example.internal:8080");
     }
 
     @SuppressWarnings("unchecked")
