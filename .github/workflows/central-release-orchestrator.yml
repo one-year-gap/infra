@@ -1017,6 +1017,9 @@ jobs:
         needs.resolve-context.outputs.deploy_customer_web == 'true'
       )
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -1697,6 +1700,9 @@ jobs:
       intelligence_task_definition: ${{ steps.deploy-service.outputs.intelligence_task_definition }}
       intelligence_image: ${{ steps.deploy-service.outputs.intelligence_image }}
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
