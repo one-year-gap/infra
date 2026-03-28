@@ -403,8 +403,6 @@ jobs:
             core.setOutput(
               "can_deploy_intelligence_service",
               (
-                process.env.COUNSELING_ANALYTICS_CLUSTER_NAME &&
-                process.env.COUNSELING_ANALYTICS_SERVICE_NAME &&
                 (process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_ARN || process.env.COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY)
               ) ? "true" : "false"
             );
@@ -1719,6 +1717,21 @@ jobs:
             printf '%s\n' "$1" | tr '\t' '\n' | awk 'NF && $0 != "None" { print; exit }'
           }
 
+          ecs_cluster_exists() {
+            local cluster_name="$1"
+
+            [ -n "$cluster_name" ] || return 1
+
+            local status
+            status="$(aws ecs describe-clusters \
+              --region "$AWS_REGION" \
+              --clusters "$cluster_name" \
+              --query 'clusters[0].status' \
+              --output text 2>/dev/null || true)"
+            status="$(normalize_aws_text_scalar "$status")"
+            [ "$status" = "ACTIVE" ]
+          }
+
           ecs_service_exists() {
             local cluster_name="$1"
             local service_name="$2"
@@ -1737,6 +1750,56 @@ jobs:
             [ "$status" = "ACTIVE" ]
           }
 
+          list_service_names_in_cluster() {
+            local cluster_name="$1"
+            local service_arn=""
+
+            [ -n "$cluster_name" ] || return 0
+
+            while read -r service_arn; do
+              service_arn="$(normalize_aws_text_scalar "$service_arn")"
+              [ -n "$service_arn" ] || continue
+              printf '%s\n' "${service_arn##*/}"
+            done < <(aws ecs list-services \
+              --region "$AWS_REGION" \
+              --cluster "$cluster_name" \
+              --query 'serviceArns[]' \
+              --output text 2>/dev/null | tr '\t' '\n')
+          }
+
+          resolve_cluster_name() {
+            local requested_cluster="$1"
+            local cluster_name=""
+
+            if ecs_cluster_exists "$requested_cluster"; then
+              printf '%s\n' "$requested_cluster"
+              return
+            fi
+
+            cluster_name="$(aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Cluster']|[0].PhysicalResourceId" \
+              --output text 2>/dev/null || true)"
+            cluster_name="$(normalize_aws_text_scalar "$cluster_name")"
+            if ecs_cluster_exists "$cluster_name"; then
+              printf '%s\n' "$cluster_name"
+              return
+            fi
+
+            cluster_name="$(aws ecs list-clusters \
+              --region "$AWS_REGION" \
+              --query 'clusterArns[0]' \
+              --output text 2>/dev/null || true)"
+            cluster_name="$(normalize_aws_text_scalar "$cluster_name")"
+            if ecs_cluster_exists "$cluster_name"; then
+              printf '%s\n' "$cluster_name"
+              return
+            fi
+
+            printf '%s\n' ""
+          }
+
           resolve_service_name_from_cluster() {
             local cluster_name="$1"
             local requested_name="$2"
@@ -1753,6 +1816,17 @@ jobs:
                 return
               fi
             done
+
+            while read -r current_name; do
+              case "$current_name" in
+                *intelligence*|*recommendation*|*analysis*)
+                  if ecs_service_exists "$cluster_name" "$current_name"; then
+                    printf '%s\n' "$current_name"
+                    return
+                  fi
+                  ;;
+              esac
+            done < <(list_service_names_in_cluster "$cluster_name")
 
             printf '%s\n' ""
           }
@@ -1778,14 +1852,6 @@ jobs:
             echo "::error::COUNSELING_ANALYTICS_REPOSITORY secret is required"
             exit 1
           fi
-          if [ -z "${COUNSELING_ANALYTICS_CLUSTER_NAME:-}" ]; then
-            echo "::error::COUNSELING_ANALYTICS_CLUSTER_NAME secret is required"
-            exit 1
-          fi
-          if [ -z "${COUNSELING_ANALYTICS_SERVICE_NAME:-}" ]; then
-            echo "::error::COUNSELING_ANALYTICS_SERVICE_NAME secret is required"
-            exit 1
-          fi
 
           ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
           REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -1798,16 +1864,25 @@ jobs:
           )
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:${RECOMMENDATION_REALTIME_IMAGE_TAG}"
 
-          resolved_service_name="$(resolve_service_name_from_cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
+          resolved_cluster_name="$(resolve_cluster_name "${COUNSELING_ANALYTICS_CLUSTER_NAME:-}")"
+          if [ -z "$resolved_cluster_name" ]; then
+            echo "::error::Could not resolve intelligence-server ECS cluster. secret=${COUNSELING_ANALYTICS_CLUSTER_NAME:-empty}"
+            exit 1
+          fi
+          if [ "$resolved_cluster_name" != "${COUNSELING_ANALYTICS_CLUSTER_NAME:-}" ]; then
+            echo "::warning::COUNSELING_ANALYTICS_CLUSTER_NAME=${COUNSELING_ANALYTICS_CLUSTER_NAME:-empty} not found. Using live ECS cluster ${resolved_cluster_name} instead."
+          fi
+
+          resolved_service_name="$(resolve_service_name_from_cluster "$resolved_cluster_name" "$COUNSELING_ANALYTICS_SERVICE_NAME")"
           if [ -z "$resolved_service_name" ]; then
-            echo "::error::Could not resolve intelligence-server ECS service in cluster=${COUNSELING_ANALYTICS_CLUSTER_NAME}. secret=${COUNSELING_ANALYTICS_SERVICE_NAME}"
+            echo "::error::Could not resolve intelligence-server ECS service in cluster=${resolved_cluster_name}. secret=${COUNSELING_ANALYTICS_SERVICE_NAME}"
             exit 1
           fi
           if [ "$resolved_service_name" != "$COUNSELING_ANALYTICS_SERVICE_NAME" ]; then
             echo "::warning::COUNSELING_ANALYTICS_SERVICE_NAME=${COUNSELING_ANALYTICS_SERVICE_NAME} not found. Using live ECS service ${resolved_service_name} instead."
           fi
 
-          source_taskdef="$(resolve_taskdef_from_service "$COUNSELING_ANALYTICS_CLUSTER_NAME" "$resolved_service_name")"
+          source_taskdef="$(resolve_taskdef_from_service "$resolved_cluster_name" "$resolved_service_name")"
           source_taskdef="${source_taskdef:-${COUNSELING_ANALYTICS_TASK_DEFINITION_ARN:-}}"
           if [ -z "$source_taskdef" ]; then
             if [ -z "${COUNSELING_ANALYTICS_TASK_DEFINITION_FAMILY:-}" ]; then
@@ -1872,17 +1947,14 @@ jobs:
 
           aws ecs update-service \
             --region "$AWS_REGION" \
-            --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
+            --cluster "$resolved_cluster_name" \
             --service "$resolved_service_name" \
             --task-definition "$new_taskdef_arn" \
             --force-new-deployment >/dev/null
-
-          aws ecs wait services-stable \
-            --region "$AWS_REGION" \
-            --cluster "$COUNSELING_ANALYTICS_CLUSTER_NAME" \
-            --services "$resolved_service_name"
+          echo "Triggered fast deployment for intelligence-server service=${resolved_service_name} cluster=${resolved_cluster_name}"
 
           {
+            echo "intelligence_cluster_name=$resolved_cluster_name"
             echo "intelligence_service_name=$resolved_service_name"
             echo "intelligence_task_definition=$new_taskdef_arn"
             echo "intelligence_image=$IMAGE_URI"
