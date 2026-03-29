@@ -425,6 +425,10 @@ jobs:
         shell: bash
         env:
           SOURCE_REPO_NAME: ${{ needs.resolve-context.outputs.source_repo_name }}
+          API_SERVER_SOURCE_REPO: ${{ env.API_SERVER_SOURCE_REPO }}
+          ADMIN_WEB_SOURCE_REPO: ${{ env.ADMIN_WEB_SOURCE_REPO }}
+          WORKER_SOURCE_REPO: ${{ env.WORKER_SOURCE_REPO }}
+          INTELLIGENCE_SERVER_SOURCE_REPO: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
         run: |
           set -euo pipefail
           case "$SOURCE_REPO_NAME" in
@@ -575,6 +579,10 @@ jobs:
         env:
           # [FIX] SOURCE_REPO → SOURCE_REPO_NAME. JS 내부에서 env map으로 실제 경로 복원.
           SOURCE_REPO_NAME:            ${{ needs.resolve-context.outputs.source_repo_name }}
+          API_SERVER_SOURCE_REPO:      ${{ env.API_SERVER_SOURCE_REPO }}
+          ADMIN_WEB_SOURCE_REPO:       ${{ env.ADMIN_WEB_SOURCE_REPO }}
+          WORKER_SOURCE_REPO:          ${{ env.WORKER_SOURCE_REPO }}
+          INTELLIGENCE_SERVER_SOURCE_REPO: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
           VERSION_TAG:                 ${{ needs.create-tag.outputs.version_tag }}
           TARGET_SHA:                  ${{ needs.create-tag.outputs.target_sha }}
           RELEASE_LABEL:               ${{ needs.resolve-context.outputs.release_label }}
@@ -592,13 +600,13 @@ jobs:
 
             // [FIX] source_repo를 source_repo_name에서 복원 (job output 마스킹 우회)
             const repoMap = {
-              "api-server":          process.env.API_SERVER_SOURCE_REPO,
-              "admin-fe":            process.env.ADMIN_WEB_SOURCE_REPO,
-              "worker":              process.env.WORKER_SOURCE_REPO,
-              "intelligence-server": process.env.INTELLIGENCE_SERVER_SOURCE_REPO,
+              "api-server":          String(process.env.API_SERVER_SOURCE_REPO || "").trim(),
+              "admin-fe":            String(process.env.ADMIN_WEB_SOURCE_REPO || "").trim(),
+              "worker":              String(process.env.WORKER_SOURCE_REPO || "").trim(),
+              "intelligence-server": String(process.env.INTELLIGENCE_SERVER_SOURCE_REPO || "").trim(),
             };
             const sourceRepoName = String(process.env.SOURCE_REPO_NAME || "").trim();
-            const sourceRepoRaw  = String(repoMap[sourceRepoName] || "").trim();
+            const sourceRepoRaw  = repoMap[sourceRepoName] || "";
             const [owner, repo]  = sourceRepoRaw.split("/");
 
             const tag          = process.env.VERSION_TAG;
@@ -937,6 +945,7 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout intelligence-server
       - name: Checkout intelligence-server
         uses: actions/checkout@v4
         with:
