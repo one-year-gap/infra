@@ -1052,9 +1052,48 @@ jobs:
             ./scripts/resolve-ecs-image-tags.sh --format shell
           )
 
-          # ── 헬퍼: CloudFormation EcsClusterStack에서 LogicalResourceId 패턴으로 서비스 ARN 조회
+          normalize_aws_text_scalar() {
+            printf '%s' "$1" | tr -d '\r' | xargs
+          }
+
+          get_cluster_name() {
+            aws cloudformation describe-stack-resources \
+              --region "$AWS_REGION" \
+              --stack-name EcsClusterStack \
+              --query "StackResources[?ResourceType=='AWS::ECS::Cluster' && starts_with(LogicalResourceId,'HolliverseCluster')].PhysicalResourceId | [0]" \
+              --output text 2>/dev/null || true
+          }
+
+          CLUSTER_NAME="$(normalize_aws_text_scalar "$(get_cluster_name)")"
+          if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
+            echo "::error::Could not resolve ECS cluster name from EcsClusterStack"
+            exit 1
+          fi
+
+          # ── 헬퍼: live ECS 서비스 이름 우선, 없으면 CloudFormation physical id fallback
           get_service_arn() {
             local pattern="$1"
+            local live_pattern=""
+            case "$pattern" in
+              AdminApi)    live_pattern="/admin-api" ;;
+              CustomerApi) live_pattern="/customer-api" ;;
+              AdminWeb)    live_pattern="/AdminWeb" ;;
+            esac
+
+            if [ -n "$live_pattern" ]; then
+              local live_arn
+              live_arn="$(aws ecs list-services \
+                --region "$AWS_REGION" \
+                --cluster "$CLUSTER_NAME" \
+                --query "serviceArns[?contains(@, '${live_pattern}')] | [0]" \
+                --output text 2>/dev/null || true)"
+              live_arn="$(normalize_aws_text_scalar "$live_arn")"
+              if [ -n "$live_arn" ] && [ "$live_arn" != "None" ]; then
+                echo "$live_arn"
+                return
+              fi
+            fi
+
             aws cloudformation describe-stack-resources \
               --region "$AWS_REGION" \
               --stack-name EcsClusterStack \
@@ -1073,11 +1112,14 @@ jobs:
             local new_image_uri="$3"
 
             local taskdef_json
-            taskdef_json="$(aws ecs describe-task-definition \
+            if ! taskdef_json="$(aws ecs describe-task-definition \
               --region "$AWS_REGION" \
               --task-definition "$current_taskdef_arn" \
               --query 'taskDefinition' \
-              --output json)"
+              --output json)"; then
+              echo "::error::Unable to describe task definition: ${current_taskdef_arn}"
+              exit 1
+            fi
 
             local new_taskdef_json
             new_taskdef_json="$(echo "$taskdef_json" | jq \
@@ -1102,11 +1144,28 @@ jobs:
                     .registeredAt, .registeredBy)
               ')"
 
-            aws ecs register-task-definition \
+            if ! echo "$new_taskdef_json" | jq -e . >/dev/null; then
+              echo "::error::Rendered task definition JSON is invalid for ${current_taskdef_arn}"
+              exit 1
+            fi
+
+            local new_taskdef_arn
+            if ! new_taskdef_arn="$(aws ecs register-task-definition \
               --region "$AWS_REGION" \
               --cli-input-json "$new_taskdef_json" \
               --query 'taskDefinition.taskDefinitionArn' \
-              --output text
+              --output text)"; then
+              echo "::error::Failed to register new task definition revision"
+              exit 1
+            fi
+
+            new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
+            if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
+              echo "::error::Failed to register new task definition revision"
+              exit 1
+            fi
+
+            echo "$new_taskdef_arn"
           }
 
           # ── 헬퍼: ECS 서비스 롤아웃 + stable 대기
@@ -1146,6 +1205,11 @@ jobs:
             current_taskdef="$(aws ecs describe-services \
               --region "$AWS_REGION" --cluster "$cluster" --services "$service" \
               --query 'services[0].taskDefinition' --output text)"
+            current_taskdef="$(normalize_aws_text_scalar "$current_taskdef")"
+            if [ -z "$current_taskdef" ] || [ "$current_taskdef" = "None" ]; then
+              echo "::error::AdminWeb current task definition could not be resolved for service=${service}"
+              exit 1
+            fi
 
             new_image="${REGISTRY}/${ADMIN_WEB_REPOSITORY}:${ADMIN_WEB_IMAGE_TAG}"
             new_taskdef="$(register_new_revision "$current_taskdef" "admin-web" "$new_image")"
@@ -1169,6 +1233,11 @@ jobs:
             admin_cur_taskdef="$(aws ecs describe-services \
               --region "$AWS_REGION" --cluster "$admin_cluster" --services "$admin_service" \
               --query 'services[0].taskDefinition' --output text)"
+            admin_cur_taskdef="$(normalize_aws_text_scalar "$admin_cur_taskdef")"
+            if [ -z "$admin_cur_taskdef" ] || [ "$admin_cur_taskdef" = "None" ]; then
+              echo "::error::AdminApi current task definition could not be resolved for service=${admin_service}"
+              exit 1
+            fi
 
             admin_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:${ADMIN_API_IMAGE_TAG}"
             admin_new_taskdef="$(register_new_revision "$admin_cur_taskdef" "api-server" "$admin_new_image")"
@@ -1185,6 +1254,11 @@ jobs:
             customer_cur_taskdef="$(aws ecs describe-services \
               --region "$AWS_REGION" --cluster "$customer_cluster" --services "$customer_service" \
               --query 'services[0].taskDefinition' --output text)"
+            customer_cur_taskdef="$(normalize_aws_text_scalar "$customer_cur_taskdef")"
+            if [ -z "$customer_cur_taskdef" ] || [ "$customer_cur_taskdef" = "None" ]; then
+              echo "::error::CustomerApi current task definition could not be resolved for service=${customer_service}"
+              exit 1
+            fi
 
             customer_new_image="${REGISTRY}/${API_SERVER_REPOSITORY}:${CUSTOMER_API_IMAGE_TAG}"
             customer_new_taskdef="$(register_new_revision "$customer_cur_taskdef" "api-server" "$customer_new_image")"
