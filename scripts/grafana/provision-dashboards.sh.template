@@ -237,6 +237,41 @@ build_dashboard "hsc-spring-runtime" "Spring Runtime - Auto" "$APP_JOB_REGEX" SP
 build_dashboard "hsc-spring-http" "Spring HTTP & App - Auto" "$APP_JOB_REGEX" SPRING_HTTP_METRICS
 build_postgresql_dashboard "hsc-postgresql-exporter" "PostgreSQL Exporter - Auto" "$DB_JOB_REGEX"
 
+# Customer user-log / churn orchestration 대시보드
+build_customer_userlog_dashboard() {
+  local uid="$1";
+  local title="$2";
+  local jobName="__CUSTOMERAPIPROMETHEUSJOBNAME__";
+  local panels='[]';
+
+  add_ts_panel() {
+    local id="$1"; local x="$2"; local y="$3"; local h="$4"; local w="$5"; local ptitle="$6"; local expr="$7"; local legend="$8";
+    local panel="";
+    panel=$(jq -n --argjson id "$id" --argjson x "$x" --argjson y "$y" --argjson h "$h" --argjson w "$w" --arg title "$ptitle" --arg expr "$expr" --arg legend "$legend" --arg dsUid "$PROM_DS_UID"       '{id:$id,type:"timeseries",title:$title,datasource:{type:"prometheus",uid:$dsUid},gridPos:{h:$h,w:$w,x:$x,y:$y},targets:[{refId:"A",expr:$expr,legendFormat:$legend}],options:{legend:{displayMode:"list",placement:"bottom"}}}')
+    panels=$(jq --argjson p "$panel" '. + [$p]' <<<"$panels")
+  }
+
+  add_ts_panel 1 0 0 8 12 "UserLog Publish Rate by Result"     'sum by (result) (rate(holliverse_userlog_publish_total{job="'"${jobName}"'"}[1m]))' '{{result}}'
+
+  add_ts_panel 2 12 0 8 12 "UserLog Publish Rate by Event"     'sum by (event_name) (rate(holliverse_userlog_publish_total{job="'"${jobName}"'",result="success"}[1m]))' '{{event_name}}'
+
+  add_ts_panel 3 0 8 8 12 "UserLog Executor Active Threads"     'max by (executor) (holliverse_executor_active_count{job="'"${jobName}"'",executor="user-log"})' '{{executor}}'
+
+  add_ts_panel 4 12 8 8 12 "UserLog Executor Queue Size"     'max by (executor) (holliverse_executor_queue_size{job="'"${jobName}"'",executor="user-log"})' '{{executor}}'
+
+  add_ts_panel 5 0 16 8 12 "Admin Log Feature Call Rate by Result"     'sum by (result) (rate(holliverse_userlog_admin_log_feature_duration_seconds_count{job="'"${jobName}"'"}[1m]))' '{{result}}'
+
+  add_ts_panel 6 12 16 8 12 "Admin Log Feature Avg Duration (5m)"     'sum by (result) (rate(holliverse_userlog_admin_log_feature_duration_seconds_sum{job="'"${jobName}"'"}[5m])) / clamp_min(sum by (result) (rate(holliverse_userlog_admin_log_feature_duration_seconds_count{job="'"${jobName}"'"}[5m])), 0.001)' '{{result}}'
+
+  add_ts_panel 7 0 24 8 24 "Admin Log Feature p95 Duration (5m)"     'histogram_quantile(0.95, sum by (le, result) (rate(holliverse_userlog_admin_log_feature_duration_seconds_bucket{job="'"${jobName}"'"}[5m])))' '{{result}}'
+
+  local payload="";
+  payload=$(jq -n --arg uid "$uid" --arg title "$title" --argjson panels "$panels" '{dashboard:{uid:$uid,title:$title,schemaVersion:39,version:1,refresh:"10s",timezone:"browser",tags:["hsc","customer","userlog","churn"],editable:true,panels:$panels},overwrite:true}')
+  api POST "/api/dashboards/db" "$payload" >/dev/null
+}
+
+build_customer_userlog_dashboard "hsc-customer-userlog" "Customer UserLog & Churn Orchestration - Auto"
+
 # Loki 로그 관측 대시보드(10패널)
 build_loki_dashboard() {
   local uid="$1";
