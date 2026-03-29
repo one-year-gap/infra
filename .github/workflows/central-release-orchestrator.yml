@@ -946,7 +946,6 @@ jobs:
           fi
 
       - name: Checkout intelligence-server
-      - name: Checkout intelligence-server
         uses: actions/checkout@v4
         with:
           repository: ${{ env.INTELLIGENCE_SERVER_SOURCE_REPO }}
