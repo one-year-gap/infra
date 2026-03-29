@@ -103,8 +103,10 @@ public class FargateWebService extends Construct {
          */
         this.service = FargateService.Builder.create(this, SERVICE_ID)
                 .cluster(props.cluster())
-                //health check 추가 - 60s
-                .healthCheckGracePeriod(Duration.seconds(60))
+                // 무중단 배포가 필요 없으므로 교체 속도를 우선한다.
+                .minHealthyPercent(0)
+                .maxHealthyPercent(100)
+                .healthCheckGracePeriod(Duration.seconds(30))
                 .taskDefinition(taskDefinition)
                 //securityGroup: Task ENI에 적용할 Security Group
                 .securityGroups(List.of(props.serviceSg()))

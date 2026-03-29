@@ -186,8 +186,11 @@ public class FargateApiService extends Construct {
                 .securityGroups(List.of(props.serviceSg()))
                 .vpcSubnets(props.subnets())
                 .assignPublicIp(false)
-                // Pinpoint agent 초기화 시간을 고려해 grace period를 넉넉히 설정
-                .healthCheckGracePeriod(Duration.seconds(300))
+                // 무중단이 필수가 아니므로 빠른 교체를 우선한다.
+                .minHealthyPercent(0)
+                .maxHealthyPercent(100)
+                // Pinpoint init을 고려하되 과도한 grace period는 줄인다.
+                .healthCheckGracePeriod(Duration.seconds(90))
                 .desiredCount(props.desiredCount())
                 .enableExecuteCommand(props.enableEcsExec());
 

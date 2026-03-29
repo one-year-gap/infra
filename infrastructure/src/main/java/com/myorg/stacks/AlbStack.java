@@ -92,7 +92,7 @@ public class AlbStack extends Stack {
                 .build());
 
         //TargetGroup -> Customer API
-        customerHttps.addTargets(CUSTOMER_API_TARGET, AddApplicationTargetsProps.builder()
+        ApplicationTargetGroup customerTargetGroup = customerHttps.addTargets(CUSTOMER_API_TARGET, AddApplicationTargetsProps.builder()
                 //ALB -> container 전달방식: HTTP
                 .protocol(ApplicationProtocol.HTTP)
                 //ALB -> Container에 보내는 트래픽 포트
@@ -106,12 +106,13 @@ public class AlbStack extends Stack {
                 .healthCheck(HealthCheck.builder()
                         .path(CUSTOMER_HEALTH_CHECK)
                         .healthyHttpCodes("200")
-                        .interval(Duration.seconds(30))
+                        .interval(Duration.seconds(10))
                         .timeout(Duration.seconds(5))
                         .healthyThresholdCount(2)
                         .unhealthyThresholdCount(3)
                         .build())
                 .build());
+        customerTargetGroup.setAttribute("deregistration_delay.timeout_seconds", "15");
 
         /**===================================================
          * Admin ALB
@@ -150,7 +151,7 @@ public class AlbStack extends Stack {
                 .build());
 
         //TaragetGroup -> Admin Web
-        adminHttps.addTargets(ADMIN_WEB_TARGET, AddApplicationTargetsProps.builder()
+        ApplicationTargetGroup adminTargetGroup = adminHttps.addTargets(ADMIN_WEB_TARGET, AddApplicationTargetsProps.builder()
                 .protocol(ApplicationProtocol.HTTP)//ALB -> Container는 HTTP로
                 .port(loadBalancerProps.adminWebPort())//ALB -> Container 전달 포트
                 .targets(List.of(
@@ -162,12 +163,13 @@ public class AlbStack extends Stack {
                 .healthCheck(HealthCheck.builder()
                         .path(ADMIN_HEALTH_CHECK)
                         .healthyHttpCodes("200")
-                        .interval(Duration.seconds(30))
+                        .interval(Duration.seconds(10))
                         .timeout(Duration.seconds(5))
                         .healthyThresholdCount(2)
                         .unhealthyThresholdCount(3)
                         .build())
                 .build());
+        adminTargetGroup.setAttribute("deregistration_delay.timeout_seconds", "15");
     }
 
     public ApplicationLoadBalancer getCustomerAlb() {

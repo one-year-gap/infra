@@ -80,6 +80,8 @@ public class FargateBackgroundService extends Construct {
                 .securityGroups(List.of(props.serviceSg()))
                 .vpcSubnets(props.subnets())
                 .assignPublicIp(false)
+                .minHealthyPercent(0)
+                .maxHealthyPercent(100)
                 .desiredCount(props.desiredCount())
                 .enableExecuteCommand(props.enableEcsExec());
 
