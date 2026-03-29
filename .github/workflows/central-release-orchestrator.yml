@@ -1404,9 +1404,18 @@ jobs:
             exit 1
           fi
 
+          source_taskdef="$(printf '%s' "$source_taskdef" | tr -d '\r' | xargs)"
+
           container_name="${WORKER_CONTAINER_NAME:-worker}"
 
-          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+          if ! taskdef_json="$(aws ecs describe-task-definition \
+            --region "$AWS_REGION" \
+            --task-definition "$source_taskdef" \
+            --query 'taskDefinition' \
+            --output json)"; then
+            echo "::error::Unable to describe worker task definition: ${source_taskdef}"
+            exit 1
+          fi
 
           task_role_arn="$(echo "$taskdef_json" | jq -r '.taskRoleArn // empty')"
           if [ -z "$task_role_arn" ]; then
@@ -1443,7 +1452,19 @@ jobs:
               )
             ' )"
 
-          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+          if ! echo "$new_taskdef_json" | jq -e . >/dev/null; then
+            echo "::error::Rendered worker task definition JSON is invalid"
+            exit 1
+          fi
+
+          if ! new_taskdef_arn="$(aws ecs register-task-definition \
+            --region "$AWS_REGION" \
+            --cli-input-json "$new_taskdef_json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"; then
+            echo "::error::Failed to register worker task definition revision."
+            exit 1
+          fi
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
             echo "::error::Failed to register worker task definition revision."
@@ -1767,7 +1788,14 @@ jobs:
 
           container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-counseling-analytics}"
 
-          taskdef_json="$(aws ecs describe-task-definition             --region "$AWS_REGION"             --task-definition "$source_taskdef"             --query 'taskDefinition'             --output json)"
+          if ! taskdef_json="$(aws ecs describe-task-definition \
+            --region "$AWS_REGION" \
+            --task-definition "$source_taskdef" \
+            --query 'taskDefinition' \
+            --output json)"; then
+            echo "::error::Unable to describe counseling analytics task definition: ${source_taskdef}"
+            exit 1
+          fi
 
           new_taskdef_json="$(echo "$taskdef_json" | jq             --arg img "$IMAGE_URI"             --arg cname "$container_name"             '
             .containerDefinitions |= (
@@ -1787,7 +1815,19 @@ jobs:
               )
             ' )"
 
-          new_taskdef_arn="$(aws ecs register-task-definition             --region "$AWS_REGION"             --cli-input-json "$new_taskdef_json"             --query 'taskDefinition.taskDefinitionArn'             --output text)"
+          if ! echo "$new_taskdef_json" | jq -e . >/dev/null; then
+            echo "::error::Rendered counseling analytics task definition JSON is invalid"
+            exit 1
+          fi
+
+          if ! new_taskdef_arn="$(aws ecs register-task-definition \
+            --region "$AWS_REGION" \
+            --cli-input-json "$new_taskdef_json" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)"; then
+            echo "::error::Failed to register task definition revision"
+            exit 1
+          fi
           new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
@@ -1879,11 +1919,14 @@ jobs:
           IMAGE_URI="${REGISTRY}/${COUNSELING_ANALYTICS_REPOSITORY}:counseling-analytics-${RELEASE_TAG}"
           container_name="${COUNSELING_ANALYTICS_CONTAINER_NAME:-MainContainer}"
 
-          taskdef_json="$(aws ecs describe-task-definition \
+          if ! taskdef_json="$(aws ecs describe-task-definition \
             --region "$AWS_REGION" \
             --task-definition "$source_taskdef" \
             --query 'taskDefinition' \
-            --output json)"
+            --output json)"; then
+            echo "::error::Unable to describe analysis batch task definition: ${source_taskdef}"
+            exit 1
+          fi
 
           new_taskdef_json="$(echo "$taskdef_json" | jq \
             --arg img "$IMAGE_URI" \
@@ -1906,11 +1949,19 @@ jobs:
               )
             ' )"
 
-          new_taskdef_arn="$(aws ecs register-task-definition \
+          if ! echo "$new_taskdef_json" | jq -e . >/dev/null; then
+            echo "::error::Rendered analysis batch task definition JSON is invalid"
+            exit 1
+          fi
+
+          if ! new_taskdef_arn="$(aws ecs register-task-definition \
             --region "$AWS_REGION" \
             --cli-input-json "$new_taskdef_json" \
             --query 'taskDefinition.taskDefinitionArn' \
-            --output text)"
+            --output text)"; then
+            echo "::error::Failed to register analysis batch task definition revision"
+            exit 1
+          fi
           new_taskdef_arn="$(normalize_aws_text_scalar "$new_taskdef_arn")"
 
           if [ -z "$new_taskdef_arn" ] || [ "$new_taskdef_arn" = "None" ]; then
