@@ -133,7 +133,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   CDK_DEFAULT_ACCOUNT: ${{ secrets.CDK_DEFAULT_ACCOUNT }}
   AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-  PINPOINT_ECS_ENABLE: "false"
+  PINPOINT_ECS_ENABLE: "true"
   # Required CDK app envs
   REGION: ${{ secrets.AWS_REGION }}
   ADMIN_ALLOWED_CIDRS: ${{ secrets.ADMIN_ALLOWED_CIDRS }}
